@@ -2,7 +2,7 @@ import torch, torch.nn as nn
 from time import time
 from tqdm import tqdm
 
-from colorchange.configRGB import *
+from sand.config import *
 
 def main():
     # load data
@@ -10,6 +10,10 @@ def main():
     t = time()
 
     all_states, all_actions = model.load_data(DATA_GLOB)
+
+    # real grid size, from the first file, first state
+    # just to get the real shape, because GRID_SIZE is used exclusively for interference
+    FILE_GRID_SIZE = (all_states[0].shape[2], all_states[0].shape[3])
 
     print(f"Done in {time() - t:.2f}ms")
 
@@ -41,13 +45,7 @@ def main():
             all_states[i][t + 1] for i, t in zip(file_indices, time_indices)
         ]).to(model.device)
 
-        # add zeroed hidden channels to the input (if input_length == 1)
-        # hidden_states = torch.zeros(
-        #     BATCH_SIZE, model.hid_channels, *GRID_SIZE, 
-        #     device=model.device
-        # )
-
-        hidden_states = torch.zeros(BATCH_SIZE, model.hid_channels, *GRID_SIZE, device=model.device)
+        hidden_states = torch.zeros(BATCH_SIZE, model.hid_channels, *FILE_GRID_SIZE, device=model.device)
 
         model_x = []
         for k in range(model.input_length):
@@ -65,7 +63,7 @@ def main():
         # (BATCH_SIZE, model.actions, H, W) e.g: (128, 4, 8, 8) = [0, 0, 0, 0]
 
         if model.actions > 1:
-            action_map = torch.zeros(BATCH_SIZE, model.actions, *GRID_SIZE, device=model.device)
+            action_map = torch.zeros(BATCH_SIZE, model.actions, *FILE_GRID_SIZE, device=model.device)
             action_map[torch.arange(BATCH_SIZE), actions] = 1.0 # set to 1.0 the taken action for each sample in the batch
         else:
             action_map = None

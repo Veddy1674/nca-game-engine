@@ -13,7 +13,7 @@ FILENAME = "sand"
 THREADS = 14 # depends on your CPU!
 
 def run_episode(ep):
-    env = FallingSandEnv(*SIZE)
+    env = FallingSandEnv(*SIZE, sand_gradient=False)
 
     states = []
     actions = []

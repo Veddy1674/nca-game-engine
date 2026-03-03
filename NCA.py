@@ -59,7 +59,7 @@ class NCA(nn.Module):
         kernels[3, 1, 0] = 1.0 # left
         kernels[4, 1, 2] = 1.0 # right
 
-        # (60, 1, 3, 3)
+        # (self.channels, 1, 3, 3)
         self.register_buffer('vn_kernel', kernels.unsqueeze(1).repeat(self.channels, 1, 1, 1))
         
         print(f"Using {device.upper()}")
@@ -134,7 +134,7 @@ class NCA(nn.Module):
             optimizer.load_state_dict(sav['optimizer_sd'])
 
     @staticmethod
-    def load_data(glob_files: str):
+    def load_data(glob_files: str) -> tuple[list[torch.Tensor], list[torch.Tensor]]:
         # load all data to RAM (more efficient than a DataLoader for small datasets)
         files = glob(glob_files)
         
@@ -145,6 +145,6 @@ class NCA(nn.Module):
 
     # loads the state at file 'file', at index 'idx', and returns as ndarray, useful for interference
     @staticmethod
-    def load_data_first(filename: str, idx: int=0):
+    def load_data_first(filename: str, idx: int=0) -> np.ndarray:
         states = np.load(filename)['states']
         return states[idx] # as tensor: torch.from_numpy(states[idx]).float()

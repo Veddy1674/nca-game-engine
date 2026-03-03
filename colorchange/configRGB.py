@@ -33,6 +33,10 @@ else: # larger
 # each local object is a class/channel, if two different objects have the same color, that's still two classes
 COLOR_MAP = None # for RGBA it's unused
 
+# leave this so
+if COLOR_MAP is not None:
+    bgr_colormap = {k: v['color'][::-1] for k, v in COLOR_MAP.items()}
+
 # q, y, r, esc are not allowed
 KEY_MAP = {
     1: ord(' ')

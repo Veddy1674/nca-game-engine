@@ -5,13 +5,13 @@ import torch
 STEPS = 1_000
 BATCH_SIZE = 12 # increases total number of samples, along with VRAM usage
 LOG_SEGMENTS = 10
-LOAD_MODEL = "sand/sand_discreteinputs.pt" # what train.py loads (comment out to train from scratch)
+LOAD_MODEL = "sand/sand.pt" # what train.py loads (comment out to train from scratch)
 FILE_NAME = "sand/sand.pt" # result model file name (post training)
 DATA_GLOB = "sand/dev/data/sand_*.npz"
 MICROSTEPS = 12
 
 # visualizer params
-FIRST_DATA_FILE = "sand/dev/data/sand_0_51744.npz"
+FIRST_DATA_FILE = "sand/dev/data/sand_0_26116.npz"
 GRID_SIZE = (96, 96) # H, W
 STARTING_IMAGE = "sand/start_img.png" # repeated for each input_length for simplicity
 BIT_DEPTH_LEVELS = 256
@@ -37,6 +37,10 @@ COLOR_MAP = { # RGB
     3: {'name': 'Background', 'color': [38, 38, 38]}
 }
 
+# leave this so
+if COLOR_MAP is not None:
+    bgr_colormap = {k: v['color'][::-1] for k, v in COLOR_MAP.items()}
+
 # q, y, r, esc are not allowed
 KEY_MAP = {
     1: ord('d'), # right
@@ -60,3 +64,33 @@ loss_func = torch.nn.CrossEntropyLoss(weight=weights)
 def loss_calc(pred_visible: torch.Tensor, states: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
     # loss ONLY on visible channels
     return loss_func(pred_visible, targets.argmax(dim=1)) # for one-hot
+
+import numpy as np
+
+# img is the state after one-hot to BGR conversion, but before cv2 upscaling
+def post_processing(img: np.ndarray) -> np.ndarray:
+    result = img.copy()
+    
+    sand_color = np.array(bgr_colormap[2])  # colore sabbia originale
+    
+    # Trova pixel di sabbia
+    sand_mask = np.all(result == sand_color, axis=2)
+    
+    if np.any(sand_mask):
+        h, w = img.shape[:2]
+        
+        # Colori gradient in BGR: da (71,169,191) a (38,38,255)
+        color_start = np.array([71, 169, 191])
+        color_end = np.array([38, 38, 255])
+        
+        # Calcola gradient in base alla colonna
+        y_indices, x_indices = np.where(sand_mask)
+        t = x_indices / (w - 1)  # normalizza tra 0 e 1
+        
+        # Interpola i colori
+        colors = (color_start * (1 - t[:, np.newaxis]) + 
+                  color_end * t[:, np.newaxis]).astype(np.uint8)
+        
+        result[y_indices, x_indices] = colors
+    
+    return result

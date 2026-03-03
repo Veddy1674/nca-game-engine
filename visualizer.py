@@ -8,9 +8,6 @@ from sand.config import *
 model.load("sand/sand.pt")
 model.eval()
 
-if COLOR_MAP is not None:
-    bgr_colormap = {k: v['color'][::-1] for k, v in COLOR_MAP.items()}
-
 # only used for models that output RGBA!
 def snap_colors(img: np.ndarray) -> np.ndarray:
     # img: float 0-1
@@ -18,95 +15,62 @@ def snap_colors(img: np.ndarray) -> np.ndarray:
     levels = float(BIT_DEPTH_LEVELS)
     return np.round(img * (levels - 1)) / (levels - 1)
 
-def state_to_img(state: np.ndarray):
-    if COLOR_MAP is not None: # one-hot
+if 'state_to_img' not in globals():
+    def state_to_img(state: np.ndarray):
+        if COLOR_MAP is not None: # one-hot
 
-        # create empty BGR image (all colors are black)
-        img = np.zeros((*GRID_SIZE, 3), dtype=np.uint8)
-        state = state.argmax(axis=0) # convert one-hot to class indices (0, 1, 2, 3)
+            # create empty BGR image (all colors are black)
+            img = np.zeros((*GRID_SIZE, 3), dtype=np.uint8)
+            state = state.argmax(axis=0) # convert one-hot to class indices (0, 1, 2, 3)
 
-        for cls, color in bgr_colormap.items():
-            mask = (state == cls)
-            img[mask] = color
+            for cls, color in bgr_colormap.items():
+                mask = (state == cls)
+                img[mask] = color
+
+            img = post_processing(img)
+            
+            return cv2.resize(img, WIN_SIZE, interpolation=cv2.INTER_NEAREST)
         
-        return cv2.resize(img, WIN_SIZE, interpolation=cv2.INTER_NEAREST)
-    
-    else: # RGBA
-        img = np.transpose(state[:3], (1, 2, 0)) # RGB
-        img = np.clip(img * 255, 0, 255).astype(np.uint8) # clipping is necessary to avoid RuntimeWarning
+        else: # RGBA
+            img = np.transpose(state[:3], (1, 2, 0)) # RGB
+            img = np.clip(img * 255, 0, 255).astype(np.uint8) # clipping is necessary to avoid RuntimeWarning
 
-        return cv2.resize(img, WIN_SIZE, interpolation=cv2.INTER_NEAREST)
+            img = post_processing(img)
 
-""" for input_length == 1:
-def predict_next(state: np.ndarray, action: int):
-    x_vis = torch.from_numpy(state).float().unsqueeze(0).to(model.device)  # (1,4,8,8)
-    
-    # zeroed hidden states that only persist during microsteps
-    hidden = torch.zeros(1, model.hid_channels, *GRID_SIZE, device=model.device)
-    
-    model_x = torch.cat([x_vis, hidden], dim=1)  # (1, 16, 8, 8)
-    
-    # just like in train.py:
-    action_map = torch.zeros(1, model.actions, *GRID_SIZE, device=model.device)
-    action_map[0, action] = 1.0
-    
-    with torch.no_grad():
-        pred = model.step(model_x, action_map, microsteps=MICROSTEPS)
-
-    # debugging
-    global last_prediction
-    last_prediction = pred
-    
-    # only return visible channels
-    next_frame = pred[0, :4].argmax(dim=0).cpu().numpy() # s'
-    return next_frame
-"""
+            return cv2.resize(img, WIN_SIZE, interpolation=cv2.INTER_NEAREST)
 
 # for input_length >= 1:
-def predict_next(action: int):
-    global state_history
+if 'predict_next' not in globals():
+    def predict_next(state_history: list[np.ndarray], action: int):
+        hidden = torch.zeros(1, model.hid_channels, *GRID_SIZE, device=model.device)
 
-    hidden = torch.zeros(1, model.hid_channels, *GRID_SIZE, device=model.device)
+        # build model_x list from history
+        model_x = []
 
-    # build model_x list from history
-    model_x = []
+        for k in range(model.input_length):
+            s = state_history[-(k+1)] if k < len(state_history) else state_history[0]  # pad with oldest
+            s = torch.from_numpy(s).float().unsqueeze(0).to(model.device)
+            s = torch.cat([s, hidden], dim=1)
 
-    for k in range(model.input_length):
-        s = state_history[-(k+1)] if k < len(state_history) else state_history[0]  # pad with oldest
-        s = torch.from_numpy(s).float().unsqueeze(0).to(model.device)
-        s = torch.cat([s, hidden], dim=1)
+            model_x.append(s)
 
-        model_x.append(s)
+        if model.actions > 1:
+            action_map = torch.zeros(1, model.actions, *GRID_SIZE, device=model.device)
+            action_map[0, action] = 1.0
+        else:
+            action_map = None
 
-    if model.actions > 1:
-        action_map = torch.zeros(1, model.actions, *GRID_SIZE, device=model.device)
-        action_map[0, action] = 1.0
-    else:
-        action_map = None
+        with torch.no_grad():
+            pred = model.step(model_x, action_map, microsteps=MICROSTEPS)
 
-    with torch.no_grad():
-        pred = model.step(model_x, action_map, microsteps=MICROSTEPS)
-
-    global last_prediction
-    last_prediction = pred
-
-    if COLOR_MAP is not None: #! 4 or model.vis_channels?
-        next_frame = pred[0, :4].argmax(dim=0).cpu().numpy() # one-hot
-    else:
-        next_frame = pred[0, :4].cpu().numpy() # RGBA
-    
-    return next_frame
+        if COLOR_MAP is not None: #! 4 or model.vis_channels?
+            next_frame = pred[0, :4].argmax(dim=0).cpu().numpy() # one-hot
+        else:
+            next_frame = pred[0, :4].cpu().numpy() # RGBA
+        
+        return pred, next_frame
 
 win_name = "NCA Visualizer"
-
-""" where input_length == 1:
-def reset():
-    global state, frame_counter, last_prediction
-
-    state = model.load_data_first(FIRST_DATA_FILE, idx=0)
-    frame_counter = 0
-    last_prediction = None # debug, defined in predict_next()
-"""
 
 states_data = np.load(FIRST_DATA_FILE)['states'] # e.g: (2002, 4, 8, 8), so it's steps, color channels, height, width
 data_grid = states_data.shape[2], states_data.shape[3] # (H, W)
@@ -114,11 +78,6 @@ data_grid = states_data.shape[2], states_data.shape[3] # (H, W)
 def maybe_resize(s):
     # if GRID_SIZE is different than trained data, resize (to test model on different grid sizes)
     if data_grid != GRID_SIZE:
-        # return np.stack([ # cv2 requires (W, H)?
-        #     cv2.resize(s[c], (GRID_SIZE[1], GRID_SIZE[0]), interpolation=cv2.INTER_NEAREST)
-        #     for c in range(s.shape[0])
-        # ]), True
-
         # expand background rather than resize
         c, h, w = s.shape
 
@@ -130,6 +89,29 @@ def maybe_resize(s):
     
     return s, False
 
+if 'manage_actions' not in globals():
+    def manage_actions(action, state_history, snap_colors):
+        last_prediction, next_frame = predict_next(state_history, action)
+
+        if COLOR_MAP is not None:
+            next_frame = np.eye(4)[next_frame].transpose(2, 0, 1)  # to one-hot (4,8,8)
+        else:
+            # color clip
+            if BIT_DEPTH_LEVELS != 256:
+                # avoid snap colors on alpha if present
+                next_frame[:3] = snap_colors(next_frame[:3])  # snap_colors handles clip internally
+
+        state_history.append(next_frame)
+        
+        if len(state_history) > model.input_length:
+            state_history.pop(0)
+        
+        return last_prediction, next_frame
+
+if 'post_processing' not in globals():
+    def post_processing(state: np.ndarray) -> np.ndarray:
+        return state
+
 def reset():
     global state, frame_counter, last_prediction, state_history
     
@@ -138,7 +120,7 @@ def reset():
         img = newImage.open(STARTING_IMAGE).convert("RGB")
         img = np.array(img)
 
-        # resize se necessario
+        # resize if needed
         if img.shape[:2] != GRID_SIZE:
             img = cv2.resize(img, (GRID_SIZE[1], GRID_SIZE[0]), interpolation=cv2.INTER_NEAREST)
 
@@ -161,7 +143,7 @@ def reset():
         
         else: # RGBA
 
-            state[:3] = img.astype(np.float32)/255 # RGB channels
+            state[:3] = img.astype(np.float32) / 255 # RGB channels
             state[3] = 1.0 # alpha
 
         # init state_history with starting image repeated for simplicity
@@ -236,22 +218,7 @@ if __name__ == "__main__":
             break
 
         if action is not None:
-            next_frame = predict_next(action)
-
-            if COLOR_MAP is not None:
-                next_frame = np.eye(4)[next_frame].transpose(2, 0, 1)  # to one-hot (4,8,8)
-            else:
-                # color clip
-                if BIT_DEPTH_LEVELS != 256:
-                    # avoid snap colors on alpha if present
-                    next_frame[:3] = snap_colors(next_frame[:3])  # snap_colors handles clip internally
-
-            state_history.append(next_frame)
-            
-            if len(state_history) > model.input_length:
-                state_history.pop(0)
-            
-            state = next_frame
+            last_prediction, state = manage_actions(action, state_history, snap_colors)
             frame_counter += 1
 
     cv2.destroyAllWindows()

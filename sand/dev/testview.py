@@ -6,14 +6,33 @@ def render(state):
     h, w = state.shape[1], state.shape[2]
     img = np.zeros((h, w, 3), dtype=np.uint8)
     
-    for i, c in bgr_colors.items():
-        mask = state[i] == 1
-        img[mask] = c
+    if not env.sand_gradient:
+        for i, c in bgr_colors.items():
+            mask = state[i] == 1
+            img[mask] = c
+        
+        img = cv2.resize(img, (800, 800), interpolation=cv2.INTER_NEAREST)
+        cv2.imshow("test", img)
+    else:
+        for i in [0, 1, 3]: # floor, rect, background are one-hot
+            mask = state[i] == 1
+            img[mask] = bgr_colors[i]
     
-    img = cv2.resize(img, (800, 800), interpolation=cv2.INTER_NEAREST)
-    cv2.imshow("test", img)
+        # gradient sand
+        sand_mask = state[2] > 0.1
+        if np.any(sand_mask):
+            sand_vals = state[2][sand_mask]
+            t = np.clip((sand_vals - 0.2) / 0.8, 0, 1)
+            
+            # BGR: start (71, 169, 191), end (38, 38, 255)
+            colors = (np.array([71, 169, 191]) * (1 - t[:, np.newaxis]) + np.array([38, 38, 255]) * t[:, np.newaxis]).astype(np.uint8)
+            
+            img[sand_mask] = colors
+        
+        img = cv2.resize(img, (800, 800), interpolation=cv2.INTER_NEAREST)
+        cv2.imshow("test", img)
 
-env = FallingSandEnv(width=48, height=48)
+env = FallingSandEnv(width=48, height=48, sand_gradient=True)
 state = env.reset()
 
 colors = [

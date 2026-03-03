@@ -37,6 +37,10 @@ COLOR_MAP = { # RGB
     3: {'name': 'Background', 'color': [30, 30, 30]}
 }
 
+# leave this so
+if COLOR_MAP is not None:
+    bgr_colormap = {k: v['color'][::-1] for k, v in COLOR_MAP.items()}
+
 # q, y, r, esc are not allowed
 KEY_MAP = {
     0: ord('w'),

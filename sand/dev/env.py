@@ -1,10 +1,11 @@
 import numpy as np
 
 class FallingSandEnv:
-    def __init__(self, width=96, height=96):
+    def __init__(self, width=96, height=96, sand_gradient=False):
 
         self.width = width
         self.height = height
+        self.sand_gradient = sand_gradient
 
         self.state = self.reset()
 
@@ -66,62 +67,47 @@ class FallingSandEnv:
 
         h, w = pattern.shape
 
+        if self.sand_gradient:
+            gradient = np.linspace(0.2, 1.0, w) # less than 0.2 means the sand will be ignored
+        
+            sand_layer = np.zeros((h, w), dtype=np.float32)
+            for i in range(w):
+                sand_layer[:, i] = pattern[:, i] * gradient[i]
+
         # 7:7 so that it's attached to the rectangle
-        self.state[2, 7:7+h, self.recX:self.recX+w] = pattern
-    
-    """
-    def _updateSand(self):
-        sand = self.state[2]
-        newSand = np.zeros_like(sand)
-
-        for y in reversed(range(self.height-1)):
-            for x in range(self.width):
-
-                if sand[y, x] == 1:
-                    # if there is nothing below
-                    if sand[y+1, x] == 0 and self.state[0, y+1, x] == 0:
-                        newSand[y+1, x] = 1
-                    else:
-                        # diagonals
-                        moved = False
-                        for dx in [-1,1]:
-                            nx = x + dx
-                            if 0 <= nx < self.width and sand[y+1, nx] == 0 and self.state[0, y+1, nx] == 0:
-                                newSand[y+1, nx] = 1
-                                moved = True
-                                break
-                        
-                        if not moved:
-                            newSand[y, x] = 1
-
-        self.state[2] = newSand
-    """
+        self.state[2, 7:7+h, self.recX:self.recX+w] = sand_layer if self.sand_gradient else pattern
 
     # optimized
     def _updateSand(self):
         sand = self.state[2]
         newSand = np.zeros_like(sand)
 
-        ys, xs = np.where(sand == 1)
+        if self.sand_gradient:
+            # gradient: consider any value >= 0.2 as sand
+            ys, xs = np.where(sand >= 0.2)
+        else:
+            ys, xs = np.where(sand == 1)
 
         # reorder for y increasing
         order = np.argsort(-ys)
         ys, xs = ys[order], xs[order]
 
         for y, x in zip(ys, xs):
+            sand_value = sand[y, x]
+
             # bottom is empty
-            if sand[y+1, x] == 0 and self.state[0, y+1, x] == 0:
-                newSand[y+1, x] = 1
+            if sand[y+1, x] < 0.2 and self.state[0, y+1, x] < 0.2:
+                newSand[y+1, x] = sand_value
             else:
                 moved = False
                 for dx in [-1,1]:
                     nx = x + dx
-                    if 0 <= nx < self.width and sand[y+1, nx] == 0 and self.state[0, y+1, nx] == 0:
-                        newSand[y+1, nx] = 1
+                    if 0 <= nx < self.width and sand[y+1, nx] < 0.2 and self.state[0, y+1, nx] < 0.2:
+                        newSand[y+1, nx] = sand_value
                         moved = True
                         break
                 if not moved:
-                    newSand[y, x] = 1
+                    newSand[y, x] = sand_value
 
         self.state[2] = newSand
     
