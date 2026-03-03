@@ -75,7 +75,7 @@ while running:
                     action = PG_TO_ACTION.get(pg_key, DEFAULT_KEY)
                     break
 
-            next_frame = predict_next(visualizer.state, action)
+            next_frame = predict_next(action)
             next_frame = np.eye(4)[next_frame].transpose(2, 0, 1)
             visualizer.state_history.append(next_frame)
             if len(visualizer.state_history) > model.input_length:

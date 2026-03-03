@@ -3,9 +3,9 @@ import numpy as np
 import torch
 from PIL import Image as newImage
 
-from colorchange.configRGB import *
+from sand.config import *
 
-model.load("colorchange/colorchangeRGB.pt")
+model.load("sand/sand.pt")
 model.eval()
 
 if COLOR_MAP is not None:
