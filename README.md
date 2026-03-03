@@ -1,0 +1,2 @@
+# nca-game-engine
+Experimenting with Neural Cellular Automata to work as a Neural Game Engine: realtime frame generation, 60fps, lightweight and pixel-perfect precision
