@@ -8,4 +8,12 @@ __pycache__/
 *.npz
 **/*.npz
 
+*.nes
+**/*.nes
+
+*.png
+**/*.png
+
 .vscode/
+
+MLP.py

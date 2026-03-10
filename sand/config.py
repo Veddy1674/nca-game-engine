@@ -5,15 +5,15 @@ import torch
 STEPS = 1_000
 BATCH_SIZE = 12 # increases total number of samples, along with VRAM usage
 LOG_SEGMENTS = 10
-LOAD_MODEL = "sand/sand.pt" # what train.py loads (comment out to train from scratch)
-FILE_NAME = "sand/sand.pt" # result model file name (post training)
+# LOAD_MODEL = "sand/sand.pt" # what train.py loads (comment out to train from scratch)
+FILE_NAME = "sand/sand2.pt" # result model file name (post training)
 DATA_GLOB = "sand/dev/data/sand_*.npz"
 MICROSTEPS = 12
 
 # visualizer params
 FIRST_DATA_FILE = "sand/dev/data/sand_0_26116.npz"
-GRID_SIZE = (96, 96) # H, W
-STARTING_IMAGE = "sand/start_img.png" # repeated for each input_length for simplicity
+GRID_SIZE = (128, 128) # H, W
+STARTING_IMAGE = "sand/start_img2.png" # repeated for each input_length for simplicity
 BIT_DEPTH_LEVELS = 256
 
 base_size = 900
@@ -50,7 +50,7 @@ KEY_MAP = {
 DEFAULT_KEY = 0 # noop
 FPS = 60
 
-model = NCA(actions=4, vis_channels=len(COLOR_MAP), hid_channels=16, input_length=2, device='cuda')
+model = NCA(actions=4, vis_channels=len(COLOR_MAP), hid_channels=16, input_length=2, padding_mode='zeros', device='cuda')
 optimizer = torch.optim.Adam(model.parameters(), lr=6e-4)
 
 # the way it worked the best for me was, training on weights focused on floor, rect, background and sand weighted 0
@@ -61,9 +61,9 @@ weights = torch.tensor([0.1, 1.0, 6.0, 4.0], device=model.device)
 loss_func = torch.nn.CrossEntropyLoss(weight=weights)
 
 # customizable function which defines the loss
-def loss_calc(pred_visible: torch.Tensor, states: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
-    # loss ONLY on visible channels
-    return loss_func(pred_visible, targets.argmax(dim=1)) # for one-hot
+def loss_calc(model_pred: torch.Tensor, actions: torch.Tensor, states: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
+    pred_visible = model_pred[:, :model.vis_channels] # loss on visible channels
+    return loss_func(pred_visible, targets.argmax(dim=1))
 
 import numpy as np
 
@@ -71,25 +71,24 @@ import numpy as np
 def post_processing(img: np.ndarray) -> np.ndarray:
     result = img.copy()
     
-    sand_color = np.array(bgr_colormap[2])  # colore sabbia originale
+    sand_color = np.array(bgr_colormap[2])
     
-    # Trova pixel di sabbia
+    # find sand
     sand_mask = np.all(result == sand_color, axis=2)
     
     if np.any(sand_mask):
         h, w = img.shape[:2]
         
-        # Colori gradient in BGR: da (71,169,191) a (38,38,255)
+        # gradient in BGR
         color_start = np.array([71, 169, 191])
         color_end = np.array([38, 38, 255])
         
-        # Calcola gradient in base alla colonna
+        # gradient on column
         y_indices, x_indices = np.where(sand_mask)
-        t = x_indices / (w - 1)  # normalizza tra 0 e 1
+        t = x_indices / (w - 1) # normalize
         
-        # Interpola i colori
-        colors = (color_start * (1 - t[:, np.newaxis]) + 
-                  color_end * t[:, np.newaxis]).astype(np.uint8)
+        # lerp colors
+        colors = (color_start * (1 - t[:, np.newaxis]) + color_end * t[:, np.newaxis]).astype(np.uint8)
         
         result[y_indices, x_indices] = colors
     

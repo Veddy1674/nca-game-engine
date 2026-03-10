@@ -10,30 +10,37 @@ class NCA(nn.Module):
     A Neural Cellular Automata PyTorch implementation specifically meant for Neural Game Engines.
     
     Args:
-        `actions`: Number of action channels that each cell can perceive.
+        `actions`: Number of action channels that each cell perceives.
         `vis_channels`: Number of one-hot visible channels, the last one is the "dead" color (e.g. 4 for orange, red, purple, white, where white is alpha/background).
-        `grid_size`: Size of the game grid (H, W).
         `hid_channels`: Number of hidden channels, that each cell can use for internal states.
+        `extra_channels`: Number of extra channels that each cell perceives, just like actions.
+        `hidden_neurons`: Number of hidden neurons of the update net, which updates cells.
         `input_length`: How many past states the cell can see (default: 1, meaning only the current state).
+        `padding_mode`: Padding mode for the perceive function: 'reflect', 'circular', 'replicate' or the default 'zeros'.
+        `use_global_context`: Whether to give all cells a general context of all other cells (for example, how much of each color is visible).
+        `dilations`: List of dilations to use for the perceive function (default: [1], meaning only the immediate neighbors).
         `device`: Device to run the model on (default: cuda if available, else cpu).
     """
-    def __init__(self, actions: int, vis_channels: int, hid_channels: int, hidden_neurons=128, input_length=1, device: str=None):
+    def __init__(self, actions: int, vis_channels: int, hid_channels: int, extra_channels:int=0, hidden_neurons:int=128, input_length:int=1, padding_mode: str = 'zeros', use_global_context: bool = False, dilations: list = [1], device: str=None):
         super().__init__()
 
         if device is None:
             device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
         self.device = device
+        self.padding_mode = padding_mode
+        self.input_length = input_length
+        self.use_global_context = use_global_context
+        self.dilations = dilations
 
         self.actions = actions # can be 0 or >= 2, '1' makes no sense
-        
-        self.input_length = input_length
 
         self.vis_channels = vis_channels
         self.hid_channels = hid_channels # causes issues if '1', 0 or >= 2 is fine
         self.channels = vis_channels + hid_channels
 
-        self.input_dim = ((self.channels * 5) * self.input_length) + actions # cell sees itself (id) and up down left right (raw)
+        # cell sees itself (id) and up down left right (raw)
+        self.input_dim = ((self.channels * 5 * len(dilations)) * self.input_length) + actions + extra_channels + (self.channels if use_global_context else 0)
 
         if hid_channels > 0 and (hidden_neurons / hid_channels) <= 2:
             print("Warning: 'hidden_neurons / hid_channels' is less than or equal to 2, this might cause instability.")
@@ -68,52 +75,47 @@ class NCA(nn.Module):
     # Von Neumann neighborhood
     def perceive(self, x: torch.Tensor):
         # x shape is BCHW
-        return F.conv2d(x, self.vn_kernel, groups=self.channels, padding=1) # border sees nothing (0.0)
-    
-    """ where input_length == 1:
-    def forward(self, x: torch.Tensor, action_map: torch.Tensor):
-        percept = self.perceive(x)
 
-        # B, Actions, H, W
-        inp = torch.cat([percept, action_map], dim=1)
+        perceptions = []
+        for d in self.dilations:
+            if self.padding_mode == 'zeros':
+                out = F.conv2d(x, self.vn_kernel, groups=self.channels, padding=d, dilation=d)
+            else:
+                x_pad = F.pad(x, (d,d,d,d), mode=self.padding_mode)
+                out = F.conv2d(x_pad, self.vn_kernel, groups=self.channels, padding=0, dilation=d)
+            perceptions.append(out)
+        return torch.cat(perceptions, dim=1)
 
-        # calc delta
-        dx = self.net(inp)
-
-        return x + dx
-    """
-
-    # where input_length >= 1:
-    def forward(self, states: list[torch.Tensor], action_map: torch.Tensor):
+    # arg0 must be a list (even if input_length is 1)
+    def forward(self, states: list[torch.Tensor], action_map: torch.Tensor|None, extra_map: torch.Tensor|None):
         # perceive each state and concat
         percepts = [self.perceive(s) for s in states]
 
+        to_cat = [*percepts] 
+
+        if self.use_global_context:
+            global_ctx = states[0].mean(dim=[2,3], keepdim=True).expand_as(states[0])
+            to_cat.append(global_ctx)
+        
         if action_map is not None:
-            inp = torch.cat([*percepts, action_map], dim=1)
-        else:
-            inp = torch.cat(percepts, dim=1)
+            to_cat.append(action_map)
+        if extra_map is not None:
+            to_cat.append(extra_map)
+
+        # one single memory alloc
+        inp = torch.cat(to_cat, dim=1)
         
         dx = self.net(inp)
         return states[0] + dx # apply delta to current state only
     
     # s + a = s'
-    """ where input_length == 1:
-    def step(self, x: torch.Tensor, action_map: torch.Tensor, microsteps: int):
-        state = x
-
-        for _ in range(microsteps):
-            state = self(state, action_map)
-            
-        return state
-    """
-
     # e.g: (with input_length = 3): s + s' + s'' + a = s'''
     # where input_length >= 1
-    def step(self, states: list[torch.Tensor], action_map: torch.Tensor, microsteps: int):
+    def step(self, states: list[torch.Tensor], action_map: torch.Tensor|None, extra_map: torch.Tensor|None, microsteps: int):
         state_history = states  # [current, prev1, prev2, ...]
         
         for _ in range(microsteps):
-            new_state = self(state_history, action_map)
+            new_state = self(state_history, action_map, extra_map)
             # shift history: new becomes current, drop oldest
             state_history = [new_state] + state_history[:-1]
             
@@ -134,14 +136,29 @@ class NCA(nn.Module):
             optimizer.load_state_dict(sav['optimizer_sd'])
 
     @staticmethod
-    def load_data(glob_files: str) -> tuple[list[torch.Tensor], list[torch.Tensor]]:
+    def load_data(glob_files: str, limit: int|None=None, **kwargs) -> tuple[list[torch.Tensor], list[torch.Tensor]]:
         # load all data to RAM (more efficient than a DataLoader for small datasets)
         files = glob(glob_files)
         
-        states = [torch.from_numpy(np.load(f)['states']).float() for f in files]
-        actions = [torch.from_numpy(np.load(f)['actions']).long() for f in files]
+        if limit is not None:
+            files = files[:limit]
+        
+        # changed to be dynamic
+        results = {name: [] for name in kwargs}
+    
+        for f in files:
+            data = np.load(f)
+            for name, dtype in kwargs.items():
+                tensor = torch.from_numpy(data[name])
 
-        return states, actions
+                if dtype == 'float':
+                    tensor = tensor.float()
+                elif dtype == 'long':
+                    tensor = tensor.long()
+                
+                results[name].append(tensor)
+        
+        return tuple(results[name] for name in kwargs)
 
     # loads the state at file 'file', at index 'idx', and returns as ndarray, useful for interference
     @staticmethod
