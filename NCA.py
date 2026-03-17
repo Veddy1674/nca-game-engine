@@ -34,6 +34,7 @@ class NCA(nn.Module):
         self.dilations = dilations
 
         self.actions = actions # can be 0 or >= 2, '1' makes no sense
+        self.extra_channels = extra_channels # global, like actions
 
         self.vis_channels = vis_channels
         self.hid_channels = hid_channels # causes issues if '1', 0 or >= 2 is fine
@@ -49,9 +50,9 @@ class NCA(nn.Module):
         self.net = nn.Sequential(
             # hidden neurons / hidden channels > 2
             nn.Conv2d(self.input_dim, hidden_neurons, kernel_size=1),
-            nn.ReLU(),
+            nn.LeakyReLU(0.01), # looks like it makes the net slightly more stable than ReLU
             nn.Conv2d(hidden_neurons, self.channels, kernel_size=1), # delta!
-            nn.SELU() # SELU() grants a faster training (lower loss), but a little more unstable than Tanh()
+            nn.SELU() # SELU() grants lower loss at the beginning, but less stability than Tanh()
         )
 
         # init to zero the second Conv2d for stability
@@ -76,7 +77,18 @@ class NCA(nn.Module):
     def perceive(self, x: torch.Tensor):
         # x shape is BCHW
 
+        if len(self.dilations) == 1: # default, avoid concat's memory alloc
+            d = self.dilations[0]
+
+            if self.padding_mode == 'zeros':
+                out = F.conv2d(x, self.vn_kernel, groups=self.channels, padding=d, dilation=d)
+            else:
+                x_pad = F.pad(x, (d,d,d,d), mode=self.padding_mode)
+                out = F.conv2d(x_pad, self.vn_kernel, groups=self.channels, padding=0, dilation=d)
+            return out
+
         perceptions = []
+
         for d in self.dilations:
             if self.padding_mode == 'zeros':
                 out = F.conv2d(x, self.vn_kernel, groups=self.channels, padding=d, dilation=d)
@@ -84,6 +96,7 @@ class NCA(nn.Module):
                 x_pad = F.pad(x, (d,d,d,d), mode=self.padding_mode)
                 out = F.conv2d(x_pad, self.vn_kernel, groups=self.channels, padding=0, dilation=d)
             perceptions.append(out)
+
         return torch.cat(perceptions, dim=1)
 
     # arg0 must be a list (even if input_length is 1)
@@ -136,32 +149,87 @@ class NCA(nn.Module):
             optimizer.load_state_dict(sav['optimizer_sd'])
 
     @staticmethod
-    def load_data(glob_files: str, limit: int|None=None, **kwargs) -> tuple[list[torch.Tensor], list[torch.Tensor]]:
-        # load all data to RAM (more efficient than a DataLoader for small datasets)
+    def load_data(glob_files: str, limit: int|None=None, load_quick: bool=True, load_instant: bool=False, **kwargs) -> tuple[list[torch.Tensor], list[torch.Tensor]]:
         files = glob(glob_files)
         
         if limit is not None:
             files = files[:limit]
         
-        # changed to be dynamic
-        results = {name: [] for name in kwargs}
-    
-        for f in files:
-            data = np.load(f)
-            for name, dtype in kwargs.items():
-                tensor = torch.from_numpy(data[name])
+        if load_instant:
+            device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
-                if dtype == 'float':
-                    tensor = tensor.float()
-                elif dtype == 'long':
-                    tensor = tensor.long()
-                
-                results[name].append(tensor)
+        # load all data to RAM (more efficient than dataloaders for small datasets)
+        if load_quick:
+            
+            results = {name: [] for name in kwargs}
         
-        return tuple(results[name] for name in kwargs)
+            for f in files:
+                data = np.load(f)
+                for name, dtype in kwargs.items():
+                    tensor = torch.from_numpy(data[name])
+
+                    if dtype == 'float':
+                        tensor = tensor.float()
+                    elif dtype == 'long':
+                        tensor = tensor.long()
+                    
+                    if load_instant:
+                        tensor = tensor.to(device)
+                    
+                    results[name].append(tensor)
+            
+            return tuple(results[name] for name in kwargs)
+        
+        else: # lazy loading
+
+            results = []
+            
+            for name, dtype in kwargs.items():
+                results.append(Dataset(files, name, dtype))
+
+            return tuple(results)
 
     # loads the state at file 'file', at index 'idx', and returns as ndarray, useful for interference
     @staticmethod
     def load_data_first(filename: str, idx: int=0) -> np.ndarray:
         states = np.load(filename)['states']
         return states[idx] # as tensor: torch.from_numpy(states[idx]).float()
+
+class Dataset:
+    def __init__(self, files, name, dtype):
+        self.files = files
+        self.name = name
+        self.dtype = dtype
+        self._lengths = None
+        
+    def __len__(self):
+        if self._lengths is None:
+            self._lengths = [len(np.load(f, mmap_mode='r')[self.name]) for f in self.files]
+        
+        return sum(self._lengths)
+    
+    def __getitem__(self, idx):
+        # find file and idx
+        for file_idx, f in enumerate(self.files):
+            if self._lengths is None:
+                len_f = len(np.load(f, mmap_mode='r')[self.name])
+            else:
+                len_f = self._lengths[file_idx]
+                
+            if idx < len_f:
+                data = np.load(f, mmap_mode='r')[self.name][idx]
+
+                if np.isscalar(data): # add axis if scalar
+                    data = data[np.newaxis]
+
+                tensor = torch.from_numpy(data)
+
+                if self.dtype == 'float':
+                    return tensor.float()
+                elif self.dtype == 'long':
+                    return tensor.long()
+                else:
+                    return tensor
+                
+            idx -= len_f
+        raise IndexError

@@ -1,18 +1,18 @@
 import time
 import numpy as np
 import torch
-from sand.config import *
+from mario.configMapRenderer import *
 
 def test_inference_speed(model, num_runs=500, warmup=50):
     device = model.device
     
-    state = np.zeros((4, GRID_SIZE[0], GRID_SIZE[1]), dtype=np.float32)
-    state[3] = 1.0
+    state = np.zeros((model.vis_channels, GRID_SIZE[0], GRID_SIZE[1]), dtype=np.float32)
+    state[-1] = 1.0
     
     state_history = [state.copy() for _ in range(model.input_length)]
     
     for _ in range(warmup):
-        action = np.random.randint(0, model.actions)
+        action = np.random.randint(0, model.actions) if model.actions > 1 else 0
         hidden = torch.zeros(1, model.hid_channels, *GRID_SIZE, device=device)
 
         model_x = []
@@ -23,21 +23,26 @@ def test_inference_speed(model, num_runs=500, warmup=50):
 
             model_x.append(s)
 
-        action_map = torch.zeros(1, model.actions, *GRID_SIZE, device=device)
-        action_map[0, action] = 1.0
+        action_map = None
+        if model.actions > 1:
+            action_map = torch.zeros(1, model.actions, *GRID_SIZE, device=device)
+            action_map[0, action] = 1.0
+
+        extra_map = torch.zeros(1, model.extra_channels, *GRID_SIZE, device=device)
+        extra_map[0, 0, :, :] = 1.0
 
         with torch.no_grad():
-            pred = model.step(model_x, action_map, microsteps=MICROSTEPS)
+            pred = model.step(model_x, action_map, extra_map, microsteps=MICROSTEPS)
 
-        next_frame = pred[0, :4].argmax(dim=0).cpu().numpy()
-        next_frame = np.eye(4)[next_frame].transpose(2, 0, 1)
+        next_frame = pred[0, :model.vis_channels].argmax(dim=0).cpu().numpy()
+        next_frame = np.eye(model.vis_channels)[next_frame].transpose(2, 0, 1)
 
         state_history.append(next_frame)
         state_history.pop(0)
     
     times = []
     for _ in range(num_runs):
-        action = np.random.randint(0, model.actions)
+        action = np.random.randint(0, model.actions) if model.actions > 1 else 0
         hidden = torch.zeros(1, model.hid_channels, *GRID_SIZE, device=device)
 
         model_x = []
@@ -48,15 +53,20 @@ def test_inference_speed(model, num_runs=500, warmup=50):
 
             model_x.append(s)
 
-        action_map = torch.zeros(1, model.actions, *GRID_SIZE, device=device)
-        action_map[0, action] = 1.0
+        action_map = None
+        if model.actions > 1:
+            action_map = torch.zeros(1, model.actions, *GRID_SIZE, device=device)
+            action_map[0, action] = 1.0
+
+        extra_map = torch.zeros(1, model.extra_channels, *GRID_SIZE, device=device)
+        extra_map[0, 0, :, :] = 1.0
         
         torch.cuda.synchronize() if device == 'cuda' else None
 
         start = time.perf_counter()
 
         with torch.no_grad():
-            pred = model.step(model_x, action_map, microsteps=MICROSTEPS)
+            pred = model.step(model_x, action_map, extra_map, microsteps=MICROSTEPS)
 
         torch.cuda.synchronize() if device == 'cuda' else None
 
@@ -64,8 +74,8 @@ def test_inference_speed(model, num_runs=500, warmup=50):
         
         times.append(end - start)
         
-        next_frame = pred[0, :4].argmax(dim=0).cpu().numpy()
-        next_frame = np.eye(4)[next_frame].transpose(2, 0, 1)
+        next_frame = pred[0, :model.vis_channels].argmax(dim=0).cpu().numpy()
+        next_frame = np.eye(model.vis_channels)[next_frame].transpose(2, 0, 1)
 
         state_history.append(next_frame)
         state_history.pop(0)
@@ -75,7 +85,7 @@ def test_inference_speed(model, num_runs=500, warmup=50):
     print(f"FPS: {1000/times_ms.mean():.1f}")
 
 if __name__ == "__main__":
-    model.load("sand/sand.pt")
+    model.load("mario/renderer.pt")
     model.eval()
 
     print(f"Grid size: {GRID_SIZE[0]}x{GRID_SIZE[1]}")

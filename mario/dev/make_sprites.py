@@ -80,10 +80,10 @@ SPRITE_SIZE = 16
 
 if __name__ == "__main__":
     # this is used for illustrative purposes only
-    # representative_grid(f"{PATH}map_3376x240.png", f"{PATH}map_grid.png", color=(33, 33, 33))
+    # representative_grid(f"{PATH}allmaps.png", f"{PATH}maps_grid.png", color=(33, 33, 33))
 
     # extract unique sprites and assign a unique color
-    sprites, colors, color_map = extract_sprites(f"{PATH}map_3376x240.png", SPRITE_SIZE)
+    sprites, colors, color_map = extract_sprites(f"{PATH}allmaps.png", SPRITE_SIZE)
 
     print(f"Unique sprites found: {len(sprites)}")
     np.savez_compressed(f"{PATH}sprites{SPRITE_SIZE}x{SPRITE_SIZE}.npz", sprites=sprites, colors=colors)
@@ -92,4 +92,4 @@ if __name__ == "__main__":
     print("Colors shape:", colors.shape) # e.g: (36, 3) means 36 RGB colors
 
     # each pixel rapresents one sprite
-    Image.fromarray(color_map).save(f"{PATH}map_{3376 // SPRITE_SIZE}x{240 // SPRITE_SIZE}.png")
+    Image.fromarray(color_map).save(f"{PATH}maps_small.png")

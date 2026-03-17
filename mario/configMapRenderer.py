@@ -1,26 +1,29 @@
 from NCA import NCA
 import torch, torch.nn.functional as F
+from PIL import Image as newImage
 
 # train params
-STEPS = 3000
+STEPS = 15_000
 BATCH_SIZE = 64 # increases total number of samples, along with VRAM usage
 LOG_SEGMENTS = 100
-# LOAD_MODEL = "mario/renderer_small.pt" # what train.py loads (comment out to train from scratch)
-FILE_NAME = "mario/renderer_small.pt" # result model file name (post training)
+# LOAD_MODEL = "mario/renderer3.pt" # what train.py loads (comment out to train from scratch)
+FILE_NAME = "mario/renderer.pt" # result model file name (post training)
 DATA_GLOB = "mario/dev/data/mario_*.npz"
-MICROSTEPS = 12
+MICROSTEPS = 15
 TRAIN_STEPS = 1
 POOL_LENGTH = None
-EXTRA_MAPS = {}
+LOAD_QUICK = True # wheter to load all the datasets to RAM or use lazy loading
+LOAD_INSTANT = False # wheter to load everything to VRAM right away (for small datasets where CPU is the bottleneck)
+EXTRA_MAPS = {'map_id': 'long'}
 LOSS_GRAPH = "mario/loss_graph.png" # can be None
 
 # visualizer params
 GRID_SIZE = (15, 15)
 FIRST_DATA_FILE = "mario/dev/data/mario_0.npz"
-STARTING_IMAGE = None # repeated for each input_length for simplicity
+STARTING_IMAGE = "mario/dev/start_img.png" # repeated for each input_length for simplicity
 BIT_DEPTH_LEVELS = 256
 
-base_size = 896 # 16 x 56 (preferring multiples of 16 for pixel-perfect-looking graphics)
+base_size = 960 # 240 x 4 (preferring multiples of 16x15 for pixel-perfect-looking graphics)
 
 # auto resize so it looks pretty much always decent
 # 'base_size' on the long side and proportional on the other (e.g: 16x8 -> 600,300 with base_size=600)
@@ -50,9 +53,8 @@ COLOR_MAP = {
 # init all to 1.0
 weights = [1.0 for _ in range(len(COLOR_MAP))]
 
-# normally the weights would be much lower, but everything else is 1.0
-weights[0] = 0.8 # sky
-weights[35] = 0.2 # ground
+weights[-1] = 0.8 # sky
+weights[35] = 0.4 # ground
 
 # to see which index corresponds to which sprite: (in env.py)
 # Image.fromarray(GAME_SPRITES[idx]).show()
@@ -65,21 +67,27 @@ if COLOR_MAP is not None:
 # q, y, r, esc are not allowed
 KEY_MAP = {
     1: ord('d'), # right
-    2: ord('a'), # left
+    # 2: ord('a'), # left
 }
-DEFAULT_KEY = 0
+DEFAULT_KEY = None
 FPS = None # waits for input
 FPS_PYGAME = 60
 REFRESH_RATE = 100
 HIDE_INFO = True # to record
+VSYNC = True
 
-scroll_speed = 16
+TEMPERATURE = 1.01
+level = 4
+TOP_P = 0.99 # only applied if temperature > 1.0
 
-model = NCA(actions=3, vis_channels=len(COLOR_MAP), use_global_context=True, hid_channels=16, hidden_neurons=256, padding_mode='zeros', device='cuda')
-optimizer = torch.optim.Adam(model.parameters(), lr=1e-3) # (1e-4 if fine-tuning, to avoid catastrophic forgetting)
-# scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=STEPS, eta_min=6e-4)
-scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=0.9995)
-# scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, patience=100, factor=0.9)
+scroll_speed = 16 # pixels/frame, max 16
+
+LOAD_OPTIMIZER = True # if False uses the lr defined below, otherwise continues from the loaded model's lr
+
+model: NCA = NCA(actions=0, vis_channels=len(COLOR_MAP), use_global_context=True, hid_channels=0, extra_channels=13, hidden_neurons=128, padding_mode='zeros', device='cuda')
+optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
+
+scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=0.9999) # 0.9995
 
 loss_func = torch.nn.CrossEntropyLoss(weight=torch.tensor(weights, device=model.device))
 
@@ -91,24 +99,30 @@ def loss_calc(model_pred: torch.Tensor, actions: torch.Tensor, states: torch.Ten
     main_loss = loss_func(pred_visible, target_classes)
     
     # extra penalty on rightmost and leftmost column to incentivate level generation
-    last_col_loss = F.cross_entropy(
+    last_col_loss = F.cross_entropy( # rightmost
         pred_visible[:, :, :, -1].permute(0, 2, 1).reshape(-1, model.vis_channels),
         target_classes[:, :, -1].reshape(-1),
     )
 
-    first_col_loss = F.cross_entropy(
-        pred_visible[:, :, :, 0].permute(0, 2, 1).reshape(-1, model.vis_channels),
-        target_classes[:, :, 0].reshape(-1),
-    )
+    # first_col_loss = F.cross_entropy( # leftmost
+    #     pred_visible[:, :, :, 0].permute(0, 2, 1).reshape(-1, model.vis_channels),
+    #     target_classes[:, :, 0].reshape(-1),
+    # )
     
-    return main_loss + 0.7 * last_col_loss + 0.7 * first_col_loss
+    return main_loss + 0.7 * last_col_loss# + 0.7 * first_col_loss
+
+def addnoise(current_x):
+    if torch.rand(1).item() < 0.3:
+        noise = torch.randn_like(current_x[0][:, :model.vis_channels]) * 0.05
+        current_x[0][:, :model.vis_channels] += noise
 
 import numpy as np, cv2
 
 global_timer = 0
-qmark_cyle = [0, 1, 2, 1, 0] # animation like the original game
+# qmark anim indexes are: 12, 13, 14
+qmark_cyle = [12, 13, 14, 13, 12] # animation like the original game
 qmark_state = 0 # idx of cycle
-increment_every = int(8 * (REFRESH_RATE / 50)) # 8 if refresh rate is 50 (simply tested what looks good)
+qmark_increment_every = int(8 * (REFRESH_RATE / 50)) # 8 if refresh rate is 50 (simply tested what looks good)
 
 firsttime = True
 def _render(state: np.ndarray) -> np.ndarray:
@@ -164,27 +178,32 @@ def _render_smooth():
 
     return img
 
-stateA = None
-stateB = None
-scroll_t = 0
-pending_action = None
+def resetAll():
+    global stateA, stateB, scroll_t, pending_action
+    stateA = None
+    stateB = None
+    scroll_t = 0
+    pending_action = None
+
+resetAll()
 
 def state_to_img(state: np.ndarray) -> np.ndarray:
     global stateA, global_timer, qmark_state, qmark_cyle
 
     global_timer += 1
-    if global_timer % increment_every == 0: # usually update every 8 frames (like original game logic)
+    if global_timer % qmark_increment_every == 0: # usually update every 8 frames (like original game logic)
         qmark_state = (qmark_state + 1) % len(qmark_cyle)
         # print(qmark_state)
 
     if stateA is None: # first frame
         stateA = state.copy()
 
+    # (240, 240, 3)
     img = _render_smooth() if stateB is not None else _render(stateA)
 
     return cv2.resize(img, WIN_SIZE, interpolation=cv2.INTER_NEAREST)
 
-def manage_actions(action, state_history, snap_colors, predict_next):
+def manage_actions(action, state_history, snap_colors, predict_next, apply_top_p):
     global stateA, stateB, scroll_t, pending_action
 
     if action == 1:
@@ -199,7 +218,7 @@ def manage_actions(action, state_history, snap_colors, predict_next):
 
     # generate next state once per action
     if stateB is None and action != 0:
-        _, next_frame = predict_next(state_history, action)
+        _, next_frame = predict_next(state_history, action, apply_top_p)
         # print("NCA Forward")
 
         next_frame = np.eye(model.vis_channels)[next_frame].transpose(2, 0, 1)
@@ -225,3 +244,90 @@ def manage_actions(action, state_history, snap_colors, predict_next):
         pending_action = None
 
     return None, stateA
+
+# implemented resetAll()
+def reset(maybe_resize, states_data, data_grid):
+    if STARTING_IMAGE is not None:
+        # load image RGB
+        img = newImage.open(STARTING_IMAGE).convert("RGB")
+        img = np.array(img)
+
+        # resize if needed
+        if img.shape[:2] != GRID_SIZE:
+            img = cv2.resize(img, (GRID_SIZE[1], GRID_SIZE[0]), interpolation=cv2.INTER_NEAREST)
+
+        h, w = img.shape[:2]
+        state = np.zeros((model.vis_channels, h, w), dtype=np.float32)
+
+        # default background (last channel)
+        state[model.vis_channels - 1] = 1.0
+
+        for cls_idx, data in COLOR_MAP.items():
+            if cls_idx == (model.vis_channels - 1):
+                continue
+
+            color = np.array(data['color'], dtype=np.uint8)
+            mask = np.all(img == color, axis=2)
+            state[:, mask] = 0.0
+            state[cls_idx, mask] = 1.0
+
+        # init state_history with starting image repeated for simplicity
+        state_history = [state.copy() for _ in range(model.input_length)]
+
+        print(f"Loaded starting image: {STARTING_IMAGE}")
+
+    else:
+        state, success = maybe_resize(states_data[model.input_length - 1])
+        if success:
+            print(f"Mismatch found: Trained on {data_grid[0]}x{data_grid[1]}, visualizing on {GRID_SIZE[0]}x{GRID_SIZE[1]} {WIN_SIZE}")
+
+        # oldest -> newest, so [-1] is always most recent (consistent with append)
+        state_history = [maybe_resize(states_data[i])[0] for i in range(model.input_length)]
+
+    resetAll()
+
+    return state, state_history
+
+# extra channel management
+def predict_next(state_history: list[np.ndarray], action: int, apply_top_p):
+    hidden = torch.zeros(1, model.hid_channels, *GRID_SIZE, device=model.device)
+
+    # build model_x list from history
+    model_x = []
+
+    for k in range(model.input_length):
+        s = state_history[-(k+1)] if k < len(state_history) else state_history[0] # pad with oldest
+        s = torch.from_numpy(s).float().unsqueeze(0).to(model.device)
+        s = torch.cat([s, hidden], dim=1)
+
+        model_x.append(s)
+
+    if model.actions > 1:
+        action_map = torch.zeros(1, model.actions, *GRID_SIZE, device=model.device)
+        action_map[0, action] = 1.0
+    else:
+        action_map = None
+    
+    extra_map = torch.zeros(1, model.extra_channels, *GRID_SIZE, device=model.device)
+    extra_map[0, level, :, :] = 1.0
+
+    with torch.no_grad(): # ignoring extra map, override predict_next in a config to implement
+        pred = model.step(model_x, action_map, extra_map, microsteps=MICROSTEPS)
+
+    logits = pred[0, :model.vis_channels]
+
+    if COLOR_MAP is not None: # one-hot
+        if TEMPERATURE <= 1.0: # use argmax
+            return pred, logits.argmax(dim=0).cpu().numpy() # next_frame
+
+        C, H, W = logits.shape
+        logits = (logits / TEMPERATURE).view(C, -1).t() # apply temperature
+        
+        logits = apply_top_p(logits, p=TOP_P)
+        probs = F.softmax(logits, dim=-1) # probabilities
+        
+        next_frame = torch.multinomial(probs, 1).view(H, W).cpu().numpy()
+    else:
+        next_frame = logits.cpu().numpy() # RGBA
+    
+    return pred, next_frame

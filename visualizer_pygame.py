@@ -30,7 +30,7 @@ PG_TO_ACTION = {
 SPECIAL = {pygame.K_r, pygame.K_q, pygame.K_y, pygame.K_p}
 
 pygame.init()
-screen = pygame.display.set_mode(WIN_SIZE, vsync=1 if VSYNC else 0)
+screen = pygame.display.set_mode(WIN_SIZE, vsync=(1 if VSYNC else 0))
 pygame.display.set_caption("NCA Visualizer | P = start/pause")
 clock = pygame.time.Clock()
 pygame.key.set_repeat(0)
@@ -85,7 +85,7 @@ while running:
                 action = act
                 break
 
-        visualizer.last_prediction, next_frame = manage_actions(action, visualizer.state_history, snap_colors, predict_next)
+        visualizer.last_prediction, next_frame = manage_actions(action, visualizer.state_history, snap_colors, predict_next, apply_top_p)
         if next_frame is not None:
             visualizer.state = next_frame
             visualizer.frame_counter += 1

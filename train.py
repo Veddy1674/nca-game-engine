@@ -2,8 +2,9 @@ import torch, torch.nn as nn, torch.nn.functional as F
 from collections import deque
 from time import time
 from tqdm import tqdm
+from glob import glob
 
-from mario.configMapRenderer import *
+from cube3d.config import *
 
 if 'get_time_indices' not in globals():
     def get_time_indices(all_states, all_actions, file_indices):
@@ -17,6 +18,9 @@ if 'build_action_map' not in globals():
     def build_action_map(action_map, actions):
         action_map[torch.arange(BATCH_SIZE), actions] = 1.0 # set to 1.0 the taken action for each sample in the batch
         return action_map
+
+if 'addnoise' not in globals():
+    def addnoise(current_x): pass
 
 if POOL_LENGTH is not None:
     pool = deque(maxlen=POOL_LENGTH) # stores prediction, action_map, extra_map, target
@@ -39,10 +43,14 @@ def main():
     print("Loading data...")
     t = time()
 
-    all_states, all_actions, *extra_data = model.load_data(DATA_GLOB, states='float', actions='long', **EXTRA_MAPS)
+    if LOAD_INSTANT and not LOAD_QUICK: # basically: (LOAD_INSTANT and not LOAD_QUICK) or (not LOAD_QUICK and LOAD_INSTANT):
+        raise ValueError("LOAD_QUICK must be True if LOAD_INSTANT is True, LOAD_INSTANT must be False if LOAD_QUICK is False")
+    
+    all_states, all_actions, *extra_data = model.load_data(DATA_GLOB, limit=None, load_quick=LOAD_QUICK, load_instant=LOAD_INSTANT, states='float', actions='long', **EXTRA_MAPS)
     all_extra = dict(zip(EXTRA_MAPS.keys(), extra_data))
 
     print(f"Done in {time() - t:.2f}ms")
+    # print(f"Total samples: {len(all_states)}") # not correct
 
     # for graphs
     loss_history = []
@@ -50,24 +58,30 @@ def main():
 
     # train loop
     for step in tqdm(range(STEPS)):
-
-        # random file indexes
-        file_indices = torch.randint(len(all_states), (BATCH_SIZE,))
-        
-        # random frame indexes for each file
-        time_indices = get_time_indices(all_states, all_actions, file_indices)
+        if LOAD_QUICK:
+            # random file indexes
+            file_indices = torch.randint(len(all_states), (BATCH_SIZE,))
+            
+            # random frame indexes for each file
+            time_indices = get_time_indices(all_states, all_actions, file_indices)
+        else:
+            # lazy loading:
+            global_indices = torch.randint(len(all_actions) - model.input_length - TRAIN_STEPS, (BATCH_SIZE,))
 
         model_x = []
         for k in range(model.input_length):
-            # add to input the past k states (if input_length >= 1)
-            # s = torch.stack([
-            #     all_states[i][max(t - k, 0)] for i, t in zip(file_indices, time_indices)
-            # ]).to(model.device)
-
-            # do padding, so that files with different states sizes can be loaded while keeping BATCH_SIZE > 1
-            s = pad_to_same([
-                all_states[i][max(t - k, 0)] for i, t in zip(file_indices, time_indices)
-            ]).to(model.device)
+            # padding so that files with different states sizes can be loaded while keeping BATCH_SIZE > 1
+            if LOAD_QUICK:
+                s = pad_to_same([
+                    all_states[i][max(t - k, 0)] for i, t in zip(file_indices, time_indices)
+                ])
+            else:
+                s = pad_to_same([
+                    all_states[global_idx - k] for global_idx in global_indices
+                ])
+            
+            if not LOAD_INSTANT:
+                s = s.to(model.device)
 
             FILE_GRID_SIZE = (s.shape[2], s.shape[3]) # set after padding!
 
@@ -83,13 +97,26 @@ def main():
         current_x = model_x
 
         for n in range(TRAIN_STEPS):
-            step_actions = torch.stack([
-                all_actions[i][min(t + n, len(all_actions[i]) - 1)] for i, t in zip(file_indices, time_indices)
-            ]).to(model.device)
+            if LOAD_QUICK:
+                step_actions = torch.stack([
+                    all_actions[i][min(t + n, len(all_actions[i]) - 1)] for i, t in zip(file_indices, time_indices)
+                ])
 
-            step_targets = pad_to_same([
-                all_states[i][min(t + n + 1, len(all_states[i]) - 1)] for i, t in zip(file_indices, time_indices)
-            ]).to(model.device)
+                step_targets = pad_to_same([
+                    all_states[i][min(t + n + 1, len(all_states[i]) - 1)] for i, t in zip(file_indices, time_indices)
+                ])
+            else: # lazy loading
+                step_actions = torch.stack([
+                    all_actions[global_idx + n] for global_idx in global_indices
+                ])
+
+                step_targets = pad_to_same([
+                    all_states[global_idx + n + 1] for global_idx in global_indices
+                ])
+            
+            if not LOAD_INSTANT:
+                step_actions = step_actions.to(model.device)
+                step_targets = step_targets.to(model.device)
 
             # action map for this step
             step_action_map = None
@@ -100,17 +127,27 @@ def main():
             # extra map for this step
             step_extra_map = None
             for extra in all_extra:
-                thing = torch.stack([
-                    all_extra[extra][i][min(t + n, len(all_extra[extra][i]) - 1)] for i, t in zip(file_indices, time_indices)
-                ]).to(model.device)
+                if LOAD_QUICK:
+                    thing = torch.stack([
+                        all_extra[extra][i][min(t + n, len(all_extra[extra][i]) - 1)] for i, t in zip(file_indices, time_indices)
+                    ])
+                else:
+                    thing = torch.stack([
+                        all_extra[extra][global_idx + n] for global_idx in global_indices
+                    ])
+                
+                if not LOAD_INSTANT:
+                    thing = thing.to(model.device)
 
                 # give info to all cells (concat with action)
                 # NOTE! this assumes thing's shape is (B, C, H)
                 thing_map = thing.unsqueeze(-1).expand(-1, -1, -1, FILE_GRID_SIZE[1])
                 step_extra_map = thing_map if step_extra_map is None else torch.cat([step_extra_map, thing_map], dim=1)
 
+            addnoise(current_x)
+            
             model_pred = model.step(current_x, step_action_map, step_extra_map, microsteps=MICROSTEPS)
-            total_loss += loss_calc(model_pred, step_actions, current_x[0][:, :model.vis_channels], step_targets)
+            total_loss += loss_calc(model_pred, step_targets)
 
             pred_vis = model_pred[:, :model.vis_channels].detach()
 
@@ -119,18 +156,7 @@ def main():
 
         # save to pool 40% of the time
         if POOL_LENGTH is not None and torch.rand(1).item() < 0.4:
-
-            # next_targets = torch.stack([
-            #     all_states[i][t + 2] for i, t in zip(file_indices, time_indices) # t+2 instead of t+1
-            # ]).to(model.device)
-            
-            pool.append((
-                model_pred.detach().clone(),
-                step_action_map.detach().clone() if step_action_map is not None else None,
-                step_extra_map.detach().clone() if step_extra_map is not None else None,
-                step_targets.detach().clone()
-                # next_targets.detach().clone()
-            ))
+            pass # unimplemented (i need to do more research first)
         
         total_loss.backward() # not normalized on purpose
         
@@ -145,29 +171,16 @@ def main():
             else:
                 scheduler.step()
 
-        pool_loss = None
+        pool_loss: torch.Tensor = None
         # pool loss - separate step
         if POOL_LENGTH is not None and len(pool) > 10:
-            optimizer.zero_grad()
-
-            pred, amap, emap, target = pool[torch.randint(len(pool), (1,)).item()]
-
-            pred_vis = pred[:, :model.vis_channels]
-            hidden = pred[:, model.vis_channels:]
-
-            pool_pred = model.step([torch.cat([pred_vis, hidden], dim=1)], amap, emap, microsteps=MICROSTEPS)
-
-            pool_loss: torch.Tensor = loss_calc(pool_pred, None, pred, target)
-            pool_loss.backward()
-
-            nn.utils.clip_grad_norm_(model.parameters(), 1.0)
-            optimizer.step()
+            pass # unimplemented (i need to do more research first)
         
         if (step+1) % LOG_SEGMENTS == 0:
-            poolinfo = f" Pool loss: {pool_loss.item():.4f}" if pool_loss is not None else "None"
-            lrinfo = f" LR: {scheduler.get_last_lr()[0]:.3e}" if scheduler is not None else ""
+            poolinfo = f" - Pool Loss: {pool_loss.item():.4f}" if pool_loss is not None else " - Pool Loss: None"
+            lrinfo = f" - LR: {scheduler.get_last_lr()[0]:.3e}" if scheduler is not None else ""
 
-            tqdm.write(f"Step {step+1}/{STEPS}, Loss: {total_loss.item():.4f}{"" if POOL_LENGTH is None else poolinfo}{lrinfo}")
+            tqdm.write(f"Step {step+1}/{STEPS} - Loss: {total_loss.item():.4f}{"" if POOL_LENGTH is None else poolinfo}{lrinfo}")
 
             loss_history.append(total_loss.item())
             step_numbers.append(step+1)
@@ -185,7 +198,7 @@ if __name__ == "__main__":
 
         # defined (maybe) in config
         if 'LOAD_MODEL' in globals():
-            model.load(globals()['LOAD_MODEL'], optimizer=optimizer)
+            model.load(globals()['LOAD_MODEL'], optimizer=(optimizer if LOAD_OPTIMIZER else None))
         
         losses, steps = main()
 

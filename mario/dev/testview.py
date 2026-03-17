@@ -4,7 +4,7 @@ from env import MarioEnv, GAME_SPRITES, onehot_to_rgb
 from make_sprites import SPRITE_SIZE
 from PIL import Image as newImage
 
-env = MarioEnv(map_path="mario/dev/map_211x15.png")
+env = MarioEnv(map_path="mario/dev/maps_small.png", max_widths=[211, 164, 213, 238, 159, 212, 213, 164, 192, 237, 389, 229, 229])
 state = env.reset()
 
 WIN_SIZE = (896, 896) # prefering multiples of SPRITE_SIZE (16)
@@ -95,7 +95,7 @@ def step(action):
         pending_action = None
         scroll_t = 0
 
-SCROLL_SPEED = 1
+SCROLL_SPEED = 16
 reset()
 
 while True:
@@ -135,5 +135,10 @@ while True:
 
     elif key == ord('\\'):
         step(action=0)
+    
+    elif key == ord('1'):
+        env.set_level((env.level + 1) % env.max_level)
+        reset()
+        print("Level", env.level + 1)
 
 cv2.destroyAllWindows()

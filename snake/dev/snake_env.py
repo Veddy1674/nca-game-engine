@@ -6,7 +6,7 @@ class SnakeEnv:
         self.size = size
         self.rng_seed = seed
         # self.rng = np.random.default_rng(self.rng_seed)
-        self.reset() #!
+        self.reset()
 
     def reset(self):
         self.rng = np.random.default_rng(self.rng_seed)
@@ -41,7 +41,7 @@ class SnakeEnv:
                 idx = self.rng.integers(len(free_positions))
                 self.apple = free_positions[idx]
             else:
-                self.done = True # Griglia piena, gioco finito!
+                self.done = True
         else:
             self.snake.pop()
 

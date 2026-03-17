@@ -3,8 +3,7 @@ import numpy as np
 import snake_env as s
 from tqdm import tqdm
 
-PATH = 'data/'
-RESULT = f'{PATH}/snake' # snake_*.npz
+PATH = 'snake/dev/data/'
 
 os.makedirs(PATH, exist_ok=True)
 
@@ -37,12 +36,12 @@ if __name__ == '__main__':
     t = time.time()
 
     env = s.SnakeEnv(size=8, seed=51)
-    STEPS = 2000
-    RUN_TIMES = 550 # a .npz for each run
+    STEPS = 400
+    RUN_TIMES = 500 # a .npz for each run
     BEST_MOVE_CHANCE = 0.45 # change of doing the algorithmically best move instead of a random
     CAN_DIE = False # wheter the env is resetted when the snake hits the border
-    # if False the for loop is broken when the snake body count is (GRID_SIZE * GRID_SIZE) - 2 (thus the dataset size is not exactly the amount of STEPS)
-    body_count_limit = (env.size * env.size) - 2
+    
+    body_count_limit = 6 #(env.size * env.size) - 2
 
     for run_it in tqdm(range(RUN_TIMES)):
         env.reset()
@@ -73,14 +72,15 @@ if __name__ == '__main__':
                 env.step(action)
 
                 # count snake body
-                body_count = sum(row.count(1) for row in env.get_state())
+                body_count = len(env.snake) - 1 # exclude head
 
                 if body_count >= body_count_limit:
+                    tqdm.write(f"Aborted (run_it: {run_it}, step: {i}, body count: {body_count})")
                     break # abort
         
         frames.append(to_one_hot(np.array(env.get_state()))) # the last s+1
 
         # save
-        np.savez_compressed(RESULT + f'_{run_it}.npz', states=frames, actions=actions)
+        np.savez_compressed(f'{PATH}snake_{run_it}.npz', states=frames, actions=actions)
 
     print(f'\nDone in {(time.time() - t):.2f}s ({RUN_TIMES} runs, each {STEPS} steps)')

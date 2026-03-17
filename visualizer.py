@@ -1,11 +1,11 @@
 import cv2
 import numpy as np
-import torch
+import torch, torch.nn.functional as F
 from PIL import Image as newImage
 
-from mario.configMapRenderer import *
+from cube3d.config import *
 
-model.load("mario/renderer_small.pt")
+model.load("cube3d/cube.pt")
 model.eval()
 
 # only used for models that output RGBA!
@@ -34,9 +34,22 @@ if 'state_to_img' not in globals():
         img = pre_processing(img)
         return cv2.resize(img, WIN_SIZE, interpolation=cv2.INTER_NEAREST)
 
+# chance to activate a different channel for each pixel if not sure which to use, introduces randomness (temperature)
+def apply_top_p(logits, p=0.9):
+    sorted_logits, sorted_indices = torch.sort(logits, descending=True, dim=-1)
+    cumulative_probs = torch.cumsum(F.softmax(sorted_logits, dim=-1), dim=-1)
+
+    to_remove = cumulative_probs > p
+    to_remove[..., 1:] = to_remove[..., :-1].clone()
+    to_remove[..., 0] = False
+
+    indices_to_remove = to_remove.scatter(1, sorted_indices, to_remove)
+    logits[indices_to_remove] = float('-inf')
+    return logits
+
 # for input_length >= 1:
 if 'predict_next' not in globals():
-    def predict_next(state_history: list[np.ndarray], action: int):
+    def predict_next(state_history: list[np.ndarray], action: int, apply_top_p):
         hidden = torch.zeros(1, model.hid_channels, *GRID_SIZE, device=model.device)
 
         # build model_x list from history
@@ -58,10 +71,21 @@ if 'predict_next' not in globals():
         with torch.no_grad(): # ignoring extra map, override predict_next in a config to implement
             pred = model.step(model_x, action_map, None, microsteps=MICROSTEPS)
 
-        if COLOR_MAP is not None:
-            next_frame = pred[0, :model.vis_channels].argmax(dim=0).cpu().numpy() # one-hot
+        logits = pred[0, :model.vis_channels]
+
+        if COLOR_MAP is not None: # one-hot
+            if TEMPERATURE <= 1.0: # use argmax
+                return pred, logits.argmax(dim=0).cpu().numpy() # next_frame
+
+            C, H, W = logits.shape
+            logits = (logits / TEMPERATURE).view(C, -1).t() # apply temperature
+            
+            logits = apply_top_p(logits, p=TOP_P)
+            probs = F.softmax(logits, dim=-1) # probabilities
+            
+            next_frame = torch.multinomial(probs, 1).view(H, W).cpu().numpy()
         else:
-            next_frame = pred[0, :model.vis_channels].cpu().numpy() # RGBA
+            next_frame = logits.cpu().numpy() # RGBA
         
         return pred, next_frame
 
@@ -85,8 +109,8 @@ def maybe_resize(s):
     return s, False
 
 if 'manage_actions' not in globals():
-    def manage_actions(action, state_history, snap_colors, predict_next):
-        last_prediction, next_frame = predict_next(state_history, action)
+    def manage_actions(action, state_history, snap_colors, predict_next, apply_top_p):
+        last_prediction, next_frame = predict_next(state_history, action, apply_top_p)
 
         if COLOR_MAP is not None:
             next_frame = np.eye(model.vis_channels)[next_frame].transpose(2, 0, 1) # to one-hot (4,8,8)
@@ -150,7 +174,6 @@ if 'reset' not in globals():
             state_history = [state.copy() for _ in range(model.input_length)]
 
             print(f"Loaded starting image: {STARTING_IMAGE}")
-
 
         else:
             state, success = maybe_resize(states_data[model.input_length - 1])
@@ -223,7 +246,7 @@ if __name__ == "__main__":
             break
 
         if action is not None:
-            last_prediction, state = manage_actions(action, state_history, snap_colors, predict_next)
+            last_prediction, state = manage_actions(action, state_history, snap_colors, predict_next, apply_top_p)
             
             frame_counter += 1
 
