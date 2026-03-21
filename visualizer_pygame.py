@@ -1,8 +1,8 @@
 import pygame
 import numpy as np
 
-import visualizer
-from visualizer import *
+import visualizer_cv2
+from visualizer_cv2 import *
 
 REFRESH_RATE = globals().get('REFRESH_RATE', 100) # adapt to the monitor's refresh rate
 VSYNC = globals().get('VSYNC', True)
@@ -35,7 +35,7 @@ pygame.display.set_caption("NCA Visualizer | P = start/pause")
 clock = pygame.time.Clock()
 pygame.key.set_repeat(0)
 
-paused = False#True
+paused = False # TODO: maybe add a parameter "BEGIN_PAUSED" defaulted to False
 last_step_time = 0
 STEP_INTERVAL = 1000 // (FPS if FPS is not None else globals().get('FPS_PYGAME', 60))
 
@@ -58,16 +58,16 @@ while running:
                 case pygame.K_r:
                     resetAll()
                 case pygame.K_q:
-                    print(f"\nFrame {visualizer.frame_counter}")
+                    print(f"\nFrame {visualizer_cv2.frame_counter}")
 
-                    amount = [int(np.sum(visualizer.state[i]).item()) for i in range(model.actions)]
+                    amount = [int(np.sum(visualizer_cv2.state[i]).item()) for i in range(model.actions)]
                     print(f"Amount of each class out of {sum(amount)}:")
 
                     for cls, data in COLOR_MAP.items():
                         print(f"  {data['name']:10} - {amount[cls]}")
 
                 case pygame.K_y:
-                    lp = visualizer.last_prediction
+                    lp = visualizer_cv2.last_prediction
 
                     if lp is None:
                         print("Initial state — no predictions yet.")
@@ -85,15 +85,15 @@ while running:
                 action = act
                 break
 
-        visualizer.last_prediction, next_frame = manage_actions(action, visualizer.state_history, snap_colors, predict_next, apply_top_p)
+        visualizer_cv2.last_prediction, next_frame = manage_actions(action, visualizer_cv2.state_history, snap_colors, predict_next, apply_top_p)
         if next_frame is not None:
-            visualizer.state = next_frame
-            visualizer.frame_counter += 1
+            visualizer_cv2.state = next_frame
+            visualizer_cv2.frame_counter += 1
 
         last_step_time = now
 
     # draw
-    screen.blit(to_surface(visualizer.state), (0, 0))
+    screen.blit(to_surface(visualizer_cv2.state), (0, 0))
 
     if not HIDE_INFO:
         if not paused:
