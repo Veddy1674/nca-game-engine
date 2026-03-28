@@ -9,8 +9,9 @@ __pycache__/
 *.npz
 **/*.npz
 
-*.nes
-**/*.nes
-
 *.png
 **/*.png
+
+!example/
+!example/example.pt
+!example/loss_graph.png
