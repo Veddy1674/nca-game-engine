@@ -3,15 +3,8 @@ from collections import deque
 from time import time
 from tqdm import tqdm
 
-# loading default.py's CONFIG_FILE is equivalent of doing 'import from config import *' here
-from default import *
-import importlib.util
-
-spec = importlib.util.spec_from_file_location("cfg", CONFIG_FILE)
-cfg = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(cfg)
-
-globals().update(vars(cfg))
+from configs_vars import *
+load_configuration()
 
 if 'get_time_indices' not in globals():
     def get_time_indices(all_states, all_actions, file_indices):
