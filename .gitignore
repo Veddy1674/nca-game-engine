@@ -1,6 +1,7 @@
 __pycache__/
-**/__pycache__/
-*/__pycache__/*
+.vscode/
+
+/*/
 
 *.pt
 **/*.pt
@@ -13,10 +14,3 @@ __pycache__/
 
 *.png
 **/*.png
-
-.vscode/
-
-MLP.py
-
-cube3d/
-mario/dev/ccc/
