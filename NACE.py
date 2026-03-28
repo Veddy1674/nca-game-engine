@@ -5,9 +5,9 @@ import torch.nn.functional as F
 from glob import glob
 import numpy as np
 
-class NCA(nn.Module):
+class NACE(nn.Module):
     """
-    A Neural Cellular Automata PyTorch implementation specifically meant for Neural Game Engines.
+    A PyTorch implementation of a 'Neural Adaptive Cellular Engine', a model capable of learning emergent behaviors for game-like simulations.
     
     Args:
         `actions`: Number of action channels that each cell perceives.
@@ -21,7 +21,10 @@ class NCA(nn.Module):
         `dilations`: List of dilations to use for the perceive function (default: [1], meaning only the immediate neighbors).
         `device`: Device to run the model on (default: cuda if available, else cpu).
     """
-    def __init__(self, actions: int, vis_channels: int, hid_channels: int, extra_channels:int=0, hidden_neurons:int=128, input_length:int=1, padding_mode: str = 'zeros', use_global_context: bool = False, dilations: list = [1], device: str=None):
+    def __init__(self, actions: int, vis_channels: int, hid_channels: int, extra_channels:int=0, hidden_neurons:int=128,
+                 input_length:int=1, padding_mode: str = 'zeros', use_global_context: bool = False, dilations: list = [1],
+                 device: str=None
+                ):
         super().__init__()
 
         if device is None:
@@ -52,7 +55,7 @@ class NCA(nn.Module):
             nn.Conv2d(self.input_dim, hidden_neurons, kernel_size=1),
             nn.LeakyReLU(0.01), # looks like it makes the net slightly more stable than ReLU
             nn.Conv2d(hidden_neurons, self.channels, kernel_size=1), # delta!
-            nn.SELU() # SELU() grants lower loss at the beginning, but less stability than Tanh()
+            nn.SELU() # SELU() alone grants lower loss at the beginning, but less stability than Tanh()
         )
 
         # init to zero the second Conv2d for stability
@@ -61,7 +64,8 @@ class NCA(nn.Module):
 
         kernels = torch.zeros(5, 3, 3)
 
-        kernels[0, 1, 1] = 1.0 # center (id)
+        # Von Neumann neighborhood
+        kernels[0, 1, 1] = 1.0 # center (self)
         kernels[1, 0, 1] = 1.0 # up
         kernels[2, 2, 1] = 1.0 # down
         kernels[3, 1, 0] = 1.0 # left

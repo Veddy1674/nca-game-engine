@@ -1,4 +1,4 @@
-from NCA import NCA
+from NACE import NACE
 import torch, torch.nn.functional as F
 from PIL import Image as newImage
 
@@ -84,7 +84,7 @@ scroll_speed = 16 # pixels/frame, max 16
 
 LOAD_OPTIMIZER = True # if False uses the lr defined below, otherwise continues from the loaded model's lr
 
-model: NCA = NCA(actions=0, vis_channels=len(COLOR_MAP), use_global_context=True, hid_channels=0, extra_channels=13, hidden_neurons=128, padding_mode='zeros', device='cuda')
+model: NACE = NACE(actions=0, vis_channels=len(COLOR_MAP), use_global_context=True, hid_channels=0, extra_channels=13, hidden_neurons=128, padding_mode='zeros', device='cuda')
 optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
 
 scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=0.9999) # 0.9995

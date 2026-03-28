@@ -2,16 +2,16 @@ CONFIG_FILE = "sand/config.py"
 MODEL_PATH = "sand/sand.pt"
 
 # ignore all of this below
-from NCA import NCA
+from NACE import NACE
 import torch
 
-model: NCA = None
+model: NACE = None
 optimizer: torch.optim.Optimizer = None
 loss_calc: torch.nn.Module = None
 STEPS: int = None
 BATCH_SIZE: int = None
 LOG_SEGMENTS: int = None
-LOAD_MODEL: str = None
+# LOAD_MODEL: str = None
 FILE_NAME: str = None
 DATA_GLOB: str = None
 MICROSTEPS: int = None
@@ -35,8 +35,11 @@ TOP_P: float = None
 KEY_MAP: dict = None
 DEFAULT_KEY: int = None
 FPS: int = None
-FPS_PYGAME: int = None
-REFRESH_RATE: int = None
-VSYNC: bool = None
-HIDE_INFO: bool = None
+# FPS_PYGAME: int = None
+# REFRESH_RATE: int = None
+# VSYNC: bool = None
+# HIDE_INFO: bool = None
 WIN_SIZE: tuple[int, int] = None
+
+if __name__ == "__main__":
+    print("This file is not meant to be run directly.")

@@ -1,4 +1,4 @@
-from NCA import NCA
+from NACE import NACE
 import torch
 
 # train params
@@ -50,7 +50,7 @@ KEY_MAP = {
 DEFAULT_KEY = None
 FPS = 1
 
-model = NCA(actions=0, vis_channels=len(COLOR_MAP), hid_channels=0, input_length=1, device='cuda')
+model = NACE(actions=0, vis_channels=len(COLOR_MAP), hid_channels=0, input_length=1, device='cuda')
 optimizer = torch.optim.Adam(model.parameters(), lr=6e-4)
 
 loss_func = torch.nn.CrossEntropyLoss()

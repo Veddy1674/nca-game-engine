@@ -1,4 +1,4 @@
-from NCA import NCA
+from NACE import NACE
 import torch
 
 # train params
@@ -68,7 +68,7 @@ TOP_P = 0.99 # only applied if temperature > 1.0
 
 LOAD_OPTIMIZER = False # if False uses the lr defined below, otherwise continues from the loaded model's lr
 
-model = NCA(actions=4, vis_channels=len(COLOR_MAP), dilations=[1, 2], hid_channels=16, input_length=1, hidden_neurons=192, padding_mode='zeros', device='cuda')
+model = NACE(actions=4, vis_channels=len(COLOR_MAP), dilations=[1, 2], hid_channels=16, input_length=1, hidden_neurons=192, padding_mode='zeros', device='cuda')
 print(model.input_dim)
 optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
 

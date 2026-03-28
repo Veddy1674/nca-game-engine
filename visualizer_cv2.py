@@ -2,6 +2,7 @@ import cv2
 import numpy as np
 import torch, torch.nn.functional as F
 from PIL import Image as newImage
+from glob import glob
 
 # loading default.py's CONFIG_FILE is equivalent of doing 'import from config import *' here
 from default import *
@@ -13,7 +14,7 @@ spec.loader.exec_module(cfg)
 
 globals().update(vars(cfg))
 
-model.load("sand/sand.pt")
+model.load(MODEL_PATH)
 model.eval()
 
 # only used for models that output RGBA!
@@ -99,8 +100,13 @@ if 'predict_next' not in globals():
 
 win_name = "NCA Visualizer"
 
-states_data = np.load(FIRST_DATA_FILE)['states'] # e.g: (2002, 4, 8, 8), so it's steps, color channels, height, width
-data_grid = states_data.shape[2], states_data.shape[3] # (H, W)
+states_data = None
+data_grid = None
+
+if FIRST_DATA_FILE is not None:
+    # using glob so that asterisk is used as "find first", e.g: 'data/test_0_*.npz' finds the first file which begins with "test_0_"
+    states_data = np.load(glob(FIRST_DATA_FILE)[0])['states'] # e.g: (2002, 4, 8, 8), so it's steps, color channels, height, width
+    data_grid = states_data.shape[2], states_data.shape[3] # (H, W)
 
 def maybe_resize(s):
     # if GRID_SIZE is different than trained data, resize (to test model on different grid sizes)

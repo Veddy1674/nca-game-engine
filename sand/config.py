@@ -1,4 +1,8 @@
-from NCA import NCA
+if __name__ == "__main__":
+    print("This file is not meant to be run directly.")
+    exit()
+
+from NACE import NACE
 import torch
 
 # train params
@@ -17,7 +21,7 @@ EXTRA_MAPS = {}
 LOSS_GRAPH = "sand/loss_graph.png" # can be None
 
 # visualizer params
-FIRST_DATA_FILE = "sand/dev/data/sand_0_43962.npz"
+FIRST_DATA_FILE = None#"sand/dev/data/sand_0_*.npz"
 GRID_SIZE = (96, 96) # H, W
 STARTING_IMAGE = "sand/start_img.png" # repeated for each input_length for simplicity
 BIT_DEPTH_LEVELS = 256
@@ -63,7 +67,7 @@ LOAD_OPTIMIZER = True
 
 # surprisingly, hidden channels=0, hidden_neurons=64 and input_lenght=1 work as well
 # as a overparameterized model with 16 hidden channels, 128 hidden neurons and 2 input length.
-model = NCA(actions=4, vis_channels=len(COLOR_MAP), hid_channels=0, input_length=1, hidden_neurons=64, padding_mode='zeros', device='cuda')
+model = NACE(actions=4, vis_channels=len(COLOR_MAP), hid_channels=0, input_length=1, hidden_neurons=64, padding_mode='zeros', device='cuda')
 optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
 
 scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=0.9999) # with 1500 steps, from 1e-3 to 8.6e-4
