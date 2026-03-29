@@ -56,7 +56,7 @@ TRAIN_STEPS: int # (unstable) trains TRAIN_STEPS steps in a row each iteration, 
 POOL_LENGTH: int # (unstable) trains randomly the AI on states predicted by itself, resulting in the AI more likely to be able to fix its own mistakes
 LOAD_QUICK: bool # wheter to load everything to RAM (for small datasets) or use lazy loading
 LOAD_INSTANT: bool # wheter to load everything to RAM/VRAM (for tiny datasets where CPU loading data is the bottleneck)
-EXTRA_MAPS: dict # extra data besides states and actions (e.g: {'level': 'long'}), must be fed to input even during interference
+EXTRA_MAPS: dict # extra data besides states and actions (e.g: {'level': 'long'}), must be fed to input even during inference
 LOSS_GRAPH: str # path where to save the loss graph (or None)
 LOAD_OPTIMIZER: bool # if False uses the lr defined in model, otherwise continues from the loaded model's lr
 
