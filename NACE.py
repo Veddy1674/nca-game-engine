@@ -193,7 +193,7 @@ class NACE(nn.Module):
 
             return tuple(results)
 
-    # loads the state at file 'file', at index 'idx', and returns as ndarray, useful for interference
+    # loads the state at file 'file', at index 'idx', and returns as ndarray, useful for inference
     @staticmethod
     def load_data_first(filename: str, idx: int=0) -> np.ndarray:
         states = np.load(filename)['states']
