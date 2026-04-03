@@ -30,8 +30,9 @@ if 'state_to_img' not in globals():
                 img[mask] = color
 
         else: # RGBA
-            img = np.transpose(state[:3], (1, 2, 0)) # RGB
+            img = np.transpose(state[:3], (1, 2, 0)) # RGB - CHW to HWC
             img = np.clip(img * 255, 0, 255).astype(np.uint8) # clipping is necessary to avoid RuntimeWarning
+            img = img[:, :, ::-1] # RGB to BGR
 
         img = pre_processing(img)
         return cv2.resize(img, WIN_SIZE, interpolation=cv2.INTER_NEAREST)
