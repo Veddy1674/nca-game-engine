@@ -50,12 +50,12 @@ class NACE(nn.Module):
                 warn("'dilations' has been set to [1] because a custom kernel was provided.", category=UserWarning)
                 self.dilations = [1]
 
-            kernel_size = sum(sum(row) for row in custom_kernel) # how many 1s in the kernel
+            self.kernel_size = sum(sum(row) for row in custom_kernel) # how many 1s in the kernel
         else:
-            kernel_size = 5 # default with Von Neumann
+            self.kernel_size = 5 # default with Von Neumann
 
         # cell sees what the kernel sees, + actions, global context, past inputs, extra channels and so on
-        self.input_dim = ((self.channels * (kernel_size * len(self.dilations))) * self.input_length) + self.actions + self.extra_channels + (self.channels if self.use_global_context else 0)
+        self.input_dim = ((self.channels * (self.kernel_size * len(self.dilations))) * self.input_length) + self.actions + self.extra_channels + (self.channels if self.use_global_context else 0)
 
         if self.hid_channels > 0 and (hidden_neurons / self.hid_channels) <= 2:
             print("Warning: 'hidden_neurons / hid_channels' is less than or equal to 2, this might cause instability.")
@@ -95,7 +95,7 @@ class NACE(nn.Module):
             if self.kernel_h < 3 or self.kernel_w < 3:
                 raise ValueError(f"Kernel must be atleast 3x3, got {self.kernel_h}x{self.kernel_w}")
 
-            kernels = torch.zeros(kernel_size, self.kernel_h, self.kernel_w)
+            kernels = torch.zeros(self.kernel_size, self.kernel_h, self.kernel_w)
             
             idx = 0
             for dy in range(self.kernel_h):
@@ -104,7 +104,7 @@ class NACE(nn.Module):
                         kernels[idx, dy, dx] = 1.0
                         idx += 1
             
-            if idx != kernel_size:
+            if idx != self.kernel_size:
                 raise ValueError("Custom kernel must only contain 0s and 1s.")
             
             self.k_center = (self.kernel_h // 2, self.kernel_w // 2)
@@ -115,7 +115,7 @@ class NACE(nn.Module):
             self.kernel_h = 3
             self.kernel_w = 3
 
-            kernels = torch.zeros(kernel_size, self.kernel_h, self.kernel_w)
+            kernels = torch.zeros(self.kernel_size, self.kernel_h, self.kernel_w)
             
             kernels[0, 1, 1] = 1.0 # center (self)
             kernels[1, 0, 1] = 1.0 # up
