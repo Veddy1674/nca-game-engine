@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from warnings import warn
 
 from glob import glob
 import numpy as np
@@ -19,11 +20,12 @@ class NACE(nn.Module):
         `padding_mode`: Padding mode for the perceive function: 'reflect', 'circular', 'replicate' or the default 'zeros'.
         `use_global_context`: Whether to give all cells a general context of all other cells (for example, how much of each color is visible).
         `dilations`: List of dilations to use for the perceive function (default: [1], meaning only the immediate neighbors).
+        `custom_kernel`: Custom kernel as a list, to use for the perceive function (Note: this will override the default Von Neumann neighborhood and 'dilations' must be [1]; XY axis are flipped).
         `device`: Device to run the model on (default: cuda if available, else cpu).
     """
     def __init__(self, actions: int, vis_channels: int, hid_channels: int, extra_channels:int=0, hidden_neurons:int=128,
-                 input_length:int=1, padding_mode: str = 'zeros', use_global_context: bool = False, dilations: list = [1],
-                 device: str=None
+                 input_length:int=1, padding_mode: str = 'zeros', use_global_context: bool = False, dilations: list[int] = [1],
+                 custom_kernel: list[list[int]]=None, device: str=None
                 ):
         super().__init__()
 
@@ -43,10 +45,19 @@ class NACE(nn.Module):
         self.hid_channels = hid_channels # causes issues if '1', 0 or >= 2 is fine
         self.channels = vis_channels + hid_channels
 
-        # cell sees itself (id) and up down left right (raw)
-        self.input_dim = ((self.channels * 5 * len(dilations)) * self.input_length) + actions + extra_channels + (self.channels if use_global_context else 0)
+        if custom_kernel is not None:
+            if self.dilations != [1]:
+                warn("'dilations' has been set to [1] because a custom kernel was provided.", category=UserWarning)
+                self.dilations = [1]
 
-        if hid_channels > 0 and (hidden_neurons / hid_channels) <= 2:
+            kernel_size = sum(sum(row) for row in custom_kernel) # how many 1s in the kernel
+        else:
+            kernel_size = 5 # default with Von Neumann
+
+        # cell sees what the kernel sees, + actions, global context, past inputs, extra channels and so on
+        self.input_dim = ((self.channels * (kernel_size * len(self.dilations))) * self.input_length) + self.actions + self.extra_channels + (self.channels if self.use_global_context else 0)
+
+        if self.hid_channels > 0 and (hidden_neurons / self.hid_channels) <= 2:
             print("Warning: 'hidden_neurons / hid_channels' is less than or equal to 2, this might cause instability.")
 
         # update net
@@ -62,43 +73,102 @@ class NACE(nn.Module):
         nn.init.zeros_(self.net[-2].weight)
         nn.init.zeros_(self.net[-2].bias)
 
-        kernels = torch.zeros(5, 3, 3)
+        self.k_center = None # kernel_center, only defined with custom kernel
 
-        # Von Neumann neighborhood
-        kernels[0, 1, 1] = 1.0 # center (self)
-        kernels[1, 0, 1] = 1.0 # up
-        kernels[2, 2, 1] = 1.0 # down
-        kernels[3, 1, 0] = 1.0 # left
-        kernels[4, 1, 2] = 1.0 # right
+        if custom_kernel is not None:
+            # example with 5x5:
+            # [
+            #     [0, 0, 1, 0, 0],
+            #     [0, 1, 1, 1, 0],
+            #     [1, 1, 1, 1, 1],
+            #     [0, 1, 1, 1, 0],
+            #     [0, 0, 1, 0, 0]
+            # ]
+            # can be a rectangle and any size, as long as the two conditions below are met
 
-        # (self.channels, 1, 3, 3)
-        self.register_buffer('vn_kernel', kernels.unsqueeze(1).repeat(self.channels, 1, 1, 1))
+            self.kernel_h = len(custom_kernel)
+            self.kernel_w = len(custom_kernel[0])
+
+            if self.kernel_h % 2 != 1 or self.kernel_w % 2 != 1:
+                raise ValueError(f"Kernel must have odd dimensions, got {self.kernel_h}x{self.kernel_w}")
+            
+            if self.kernel_h < 3 or self.kernel_w < 3:
+                raise ValueError(f"Kernel must be atleast 3x3, got {self.kernel_h}x{self.kernel_w}")
+
+            kernels = torch.zeros(kernel_size, self.kernel_h, self.kernel_w)
+            
+            idx = 0
+            for dy in range(self.kernel_h):
+                for dx in range(self.kernel_w):
+                    if custom_kernel[dy][dx] == 1:
+                        kernels[idx, dy, dx] = 1.0
+                        idx += 1
+            
+            if idx != kernel_size:
+                raise ValueError("Custom kernel must only contain 0s and 1s.")
+            
+            self.k_center = (self.kernel_h // 2, self.kernel_w // 2)
         
-        print(f"Using {device.upper()}")
-        self.to(device)
+        else: # default Von Neumann neighborhood
+
+            # these are not used in perceive(), but keeping for consistency
+            self.kernel_h = 3
+            self.kernel_w = 3
+
+            kernels = torch.zeros(kernel_size, self.kernel_h, self.kernel_w)
+            
+            kernels[0, 1, 1] = 1.0 # center (self)
+            kernels[1, 0, 1] = 1.0 # up
+            kernels[2, 2, 1] = 1.0 # down
+            kernels[3, 1, 0] = 1.0 # left
+            kernels[4, 1, 2] = 1.0 # right
+
+        # end
+
+        self.register_buffer('kernel', kernels.unsqueeze(1).repeat(self.channels, 1, 1, 1))
+        
+        print(f"Using {self.device.upper()}")
+        self.to(self.device)
     
     # Von Neumann neighborhood
     def perceive(self, x: torch.Tensor):
         # x shape is BCHW
 
-        if len(self.dilations) == 1: # default, avoid concat's memory alloc
-            d = self.dilations[0]
+        # for custom kernels that aren't 3x3
+        if self.k_center is not None and (self.kernel_h != 3 or self.kernel_w != 3):
 
             if self.padding_mode == 'zeros':
-                out = F.conv2d(x, self.vn_kernel, groups=self.channels, padding=d, dilation=d)
+                out = F.conv2d(x, self.kernel, groups=self.channels, 
+                            padding=(self.k_center[0], self.k_center[1]))
+            else:
+                x_pad = F.pad(x, (self.k_center[1], self.k_center[1], self.k_center[0], self.k_center[0]), mode=self.padding_mode)
+                out = F.conv2d(x_pad, self.kernel, groups=self.channels, padding=0)
+
+            return out
+
+        # for Von Neumann neighborhood or 3x3 custom kernels
+        if len(self.dilations) == 1: # default, avoid concat's memory alloc
+            d = self.dilations[0]
+            # NOTE: If k_center WOULD BE defined for the default kernel, it would be (1, 1)
+            # which means using k_center[0] or self.dilations[0] is the same thing, although using center would 'make more sense'
+
+            if self.padding_mode == 'zeros':
+                out = F.conv2d(x, self.kernel, groups=self.channels, padding=d, dilation=d)
             else:
                 x_pad = F.pad(x, (d,d,d,d), mode=self.padding_mode)
-                out = F.conv2d(x_pad, self.vn_kernel, groups=self.channels, padding=0, dilation=d)
+                out = F.conv2d(x_pad, self.kernel, groups=self.channels, padding=0, dilation=d)
+
             return out
 
         perceptions = []
 
         for d in self.dilations:
             if self.padding_mode == 'zeros':
-                out = F.conv2d(x, self.vn_kernel, groups=self.channels, padding=d, dilation=d)
+                out = F.conv2d(x, self.kernel, groups=self.channels, padding=d, dilation=d)
             else:
                 x_pad = F.pad(x, (d,d,d,d), mode=self.padding_mode)
-                out = F.conv2d(x_pad, self.vn_kernel, groups=self.channels, padding=0, dilation=d)
+                out = F.conv2d(x_pad, self.kernel, groups=self.channels, padding=0, dilation=d)
+            
             perceptions.append(out)
 
         return torch.cat(perceptions, dim=1)
