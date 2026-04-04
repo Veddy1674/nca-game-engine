@@ -89,6 +89,12 @@ if 'predict_next' not in globals():
             next_frame = torch.multinomial(probs, 1).view(H, W).cpu().numpy()
         else:
             next_frame = logits.cpu().numpy() # RGBA
+
+            # add guassian noise
+            if TEMPERATURE > 0:
+                noise = np.random.normal(0, TEMPERATURE / 100, next_frame.shape)
+                next_frame = next_frame + noise
+                next_frame = np.clip(next_frame, 0, 1)
         
         return pred, next_frame
 
