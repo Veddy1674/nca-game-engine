@@ -45,12 +45,14 @@ class NACE(nn.Module):
         self.hid_channels = hid_channels # causes issues if '1', 0 or >= 2 is fine
         self.channels = vis_channels + hid_channels
 
-        if custom_kernel is not None:
+        self.custom_kernel = custom_kernel
+
+        if self.custom_kernel is not None:
             if self.dilations != [1]:
                 warn("'dilations' has been set to [1] because a custom kernel was provided.", category=UserWarning)
                 self.dilations = [1]
 
-            self.kernel_size = sum(sum(row) for row in custom_kernel) # how many 1s in the kernel
+            self.kernel_size = sum(sum(row) for row in self.custom_kernel) # how many 1s in the kernel
         else:
             self.kernel_size = 5 # default with Von Neumann
 
@@ -73,9 +75,7 @@ class NACE(nn.Module):
         nn.init.zeros_(self.net[-2].weight)
         nn.init.zeros_(self.net[-2].bias)
 
-        self.k_center = None # kernel_center, only defined with custom kernel
-
-        if custom_kernel is not None:
+        if self.custom_kernel is not None:
             # example with 5x5:
             # [
             #     [0, 0, 1, 0, 0],
@@ -86,8 +86,8 @@ class NACE(nn.Module):
             # ]
             # can be a rectangle and any size, as long as the two conditions below are met
 
-            self.kernel_h = len(custom_kernel)
-            self.kernel_w = len(custom_kernel[0])
+            self.kernel_h = len(self.custom_kernel)
+            self.kernel_w = len(self.custom_kernel[0])
 
             if self.kernel_h % 2 != 1 or self.kernel_w % 2 != 1:
                 raise ValueError(f"Kernel must have odd dimensions, got {self.kernel_h}x{self.kernel_w}")
@@ -100,14 +100,12 @@ class NACE(nn.Module):
             idx = 0
             for dy in range(self.kernel_h):
                 for dx in range(self.kernel_w):
-                    if custom_kernel[dy][dx] == 1:
+                    if self.custom_kernel[dy][dx] == 1:
                         kernels[idx, dy, dx] = 1.0
                         idx += 1
             
             if idx != self.kernel_size:
                 raise ValueError("Custom kernel must only contain 0s and 1s.")
-            
-            self.k_center = (self.kernel_h // 2, self.kernel_w // 2)
         
         else: # default Von Neumann neighborhood
 
@@ -130,21 +128,24 @@ class NACE(nn.Module):
         print(f"Using {self.device.upper()}")
         self.to(self.device)
     
-    # Von Neumann neighborhood
     def perceive(self, x: torch.Tensor):
         # x shape is BCHW
 
         # for custom kernels that aren't 3x3
-        if self.k_center is not None and (self.kernel_h != 3 or self.kernel_w != 3):
+        if self.custom_kernel is not None and (self.kernel_h != 3 or self.kernel_w != 3):
 
-            if self.padding_mode == 'zeros':
-                out = F.conv2d(x, self.kernel, groups=self.channels, 
-                            padding=(self.k_center[0], self.k_center[1]))
-            else:
-                x_pad = F.pad(x, (self.k_center[1], self.k_center[1], self.k_center[0], self.k_center[0]), mode=self.padding_mode)
-                out = F.conv2d(x_pad, self.kernel, groups=self.channels, padding=0)
+            # pad and slide instead of F.conv2d is equivalent and way faster on huge kernels
+            kh, kw = self.kernel_h, self.kernel_w
+            cy, cx = kh // 2, kw // 2
+            x_pad = F.pad(x, (cx, cx, cy, cy), mode='constant' if self.padding_mode == 'zeros' else self.padding_mode)
 
-            return out
+            slices = []
+            for dy in range(kh):
+                for dx in range(kw):
+                    if self.custom_kernel[dy][dx]:
+                        slices.append(x_pad[:, :, dy:dy+x.shape[2], dx:dx+x.shape[3]])
+            
+            return torch.cat(slices, dim=1)
 
         # for Von Neumann neighborhood or 3x3 custom kernels
         if len(self.dilations) == 1: # default, avoid concat's memory alloc
