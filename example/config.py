@@ -18,6 +18,8 @@ DATA_GLOB = "example/dev/data/example_*.npz"
 MICROSTEPS = 2
 
 TRAIN_STEPS = 1
+# WEIGHT_LOSS = 1 # by default: linear if TRAIN_STEPS <= 3, squared if TRAIN_STEPS <= 7, else exponential
+# GRADIENT_CLIP = 1.0 # keep to 1.0 unless TRAIN_STEPS and WEIGHT_LOSS are high, auto-defined by default but not 100% safe
 POOL_LENGTH = None
 LOAD_QUICK = True
 LOAD_INSTANT = True

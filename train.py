@@ -20,7 +20,36 @@ if 'build_action_map' not in globals():
         return action_map
 
 if 'addnoise' not in globals():
-    def addnoise(current_x): pass
+    def addnoise(model_input): pass
+
+gradient_clip_autodefine = False
+if 'GRADIENT_CLIP' not in globals():
+    GRADIENT_CLIP = 1.0
+    gradient_clip_autodefine = True
+
+if 'WEIGHT_LOSS' not in globals():
+    if TRAIN_STEPS <= 4: # [1 to 4]
+        # linear
+        WEIGHT_LOSS = [i + 1 for i in range(TRAIN_STEPS)]
+
+    elif TRAIN_STEPS <= 7: # [5 to 7]
+        # squared
+        from math import sqrt
+        WEIGHT_LOSS = [sqrt(i + 1) for i in range(TRAIN_STEPS)]
+        
+    else: # [8 to inf]
+
+        # normalization for stability (and avoid insane gradient clip values)
+        raw_weights = [2 ** i for i in range(TRAIN_STEPS)]
+        weight_sum = sum(raw_weights)
+
+        # exponential
+        WEIGHT_LOSS = [w / weight_sum * TRAIN_STEPS for w in raw_weights]
+
+    # end
+
+    if gradient_clip_autodefine:
+        GRADIENT_CLIP = max(WEIGHT_LOSS) * 0.8
 
 if POOL_LENGTH is not None:
     pool = deque(maxlen=POOL_LENGTH) # stores prediction, action_map, extra_map, target
@@ -147,7 +176,7 @@ def main():
             addnoise(current_x)
             
             model_pred = model.step(current_x, step_action_map, step_extra_map, microsteps=MICROSTEPS)
-            total_loss += loss_calc(model_pred, step_targets)
+            total_loss += loss_calc(model_pred, step_targets) * WEIGHT_LOSS[n]
 
             pred_vis = model_pred[:, :model.vis_channels].detach()
 
@@ -161,7 +190,7 @@ def main():
         total_loss.backward() # not normalized on purpose
         
         # gradient clipping
-        nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+        nn.utils.clip_grad_norm_(model.parameters(), GRADIENT_CLIP)
         optimizer.step()
 
         # scheduler update
