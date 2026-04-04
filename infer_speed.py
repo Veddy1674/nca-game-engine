@@ -76,7 +76,8 @@ if __name__ == "__main__":
     
     total_params = sum(p.numel() for p in model.parameters())
 
-    print(f"Input Dimension: {model.input_dim}")
+    print(f"Input dimension: {model.input_dim}")
+    print(f"Kernel size: {model.kernel_size}")
     print(f"Total parameters: {total_params:,}")
     print(f"Microsteps: {MICROSTEPS}")
     print(f"Input length: {model.input_length}")
