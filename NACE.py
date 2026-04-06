@@ -68,7 +68,7 @@ class NACE(nn.Module):
             nn.Conv2d(self.input_dim, hidden_neurons, kernel_size=1),
             nn.LeakyReLU(0.01), # looks like it makes the net slightly more stable than ReLU
             nn.Conv2d(hidden_neurons, self.channels, kernel_size=1), # delta!
-            nn.SELU() # SELU() alone grants lower loss at the beginning, but less stability than Tanh()
+            nn.Hardtanh(-0.5, 0.5) # previously using SELU
         )
 
         # init to zero the second Conv2d for stability
@@ -224,11 +224,16 @@ class NACE(nn.Module):
             optimizer.load_state_dict(sav['optimizer_sd'])
 
     @staticmethod
-    def load_data(glob_files: str, limit: int|None=None, load_quick: bool=True, load_instant: bool=False, **kwargs) -> tuple[list[torch.Tensor], list[torch.Tensor]]:
+    def load_data(glob_files: str, limit: int|tuple[int,int]|None=None, load_quick: bool=True, load_instant: bool=False, **kwargs) -> tuple[list[torch.Tensor], list[torch.Tensor]]:
         files = glob(glob_files)
         
         if limit is not None:
-            files = files[:limit]
+            if isinstance(limit, tuple):
+                start, end = limit
+                files = files[start:end] if end is not None else files[start:]
+                
+            elif isinstance(limit, int):
+                files = files[:limit]
         
         if load_instant:
             device = 'cuda' if torch.cuda.is_available() else 'cpu'
