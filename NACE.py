@@ -230,8 +230,20 @@ class NACE(nn.Module):
         if limit is not None:
             if isinstance(limit, tuple):
                 start, end = limit
-                files = files[start:end] if end is not None else files[start:]
-                
+
+                if start is None:
+                    if end is None:
+                        pass # both None, include all
+                    else:
+                        # start is none but end isn't
+                        files = files[:end]
+                else:
+                    if end is None:
+                        # end is none but start isn't
+                        files = files[start:]
+                    else: # from n to m
+                        files = files[start:end]
+
             elif isinstance(limit, int):
                 files = files[:limit]
         
