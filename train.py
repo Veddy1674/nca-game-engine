@@ -75,7 +75,7 @@ def main():
     if LOAD_INSTANT and not LOAD_QUICK: # basically: (LOAD_INSTANT and not LOAD_QUICK) or (not LOAD_QUICK and LOAD_INSTANT):
         raise ValueError("LOAD_QUICK must be True if LOAD_INSTANT is True, LOAD_INSTANT must be False if LOAD_QUICK is False")
     
-    all_states, all_actions, *extra_data = model.load_data(DATA_GLOB, limit=None, load_quick=LOAD_QUICK, load_instant=LOAD_INSTANT, states='float', actions='long', **EXTRA_MAPS)
+    all_states, all_actions, *extra_data = model.load_data(DATA_GLOB, limit=FILES_INCLUDE, load_quick=LOAD_QUICK, load_instant=LOAD_INSTANT, states='float', actions='long', **EXTRA_MAPS)
     all_extra = dict(zip(EXTRA_MAPS.keys(), extra_data))
 
     print(f"Done in {time() - t:.2f}ms")

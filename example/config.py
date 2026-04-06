@@ -23,6 +23,7 @@ TRAIN_STEPS = 1
 POOL_LENGTH = None
 LOAD_QUICK = True
 LOAD_INSTANT = True
+FILES_INCLUDE = None # include every file of the dataset (only one in this case)
 EXTRA_MAPS = {}
 LOSS_GRAPH = "example/loss_graph.png" # can be None
 LOAD_OPTIMIZER = True # false = override with model lr
