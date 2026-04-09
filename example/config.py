@@ -8,8 +8,8 @@ import torch
 # details about parameters can be found in configs_vars.py
 
 # train params
-STEPS = 500
-BATCH_SIZE = 512
+STEPS = 1_000
+BATCH_SIZE = 256
 LOG_SEGMENTS = 100
 
 # LOAD_MODEL = "example/example.pt"
@@ -74,13 +74,13 @@ FPS = None # waits for input
 TEMPERATURE = 1.0
 TOP_P = 0.99 # only applied if temperature > 1.0
 
-model = NACE(actions=4, vis_channels=len(COLOR_MAP), hid_channels=1, input_length=1, hidden_neurons=24, padding_mode='circular', device='cuda')
-print("Input dimension:", model.input_dim)
+model = NACE(actions=4, vis_channels=len(COLOR_MAP), hid_channels=0, input_length=1, hidden_neurons=24, padding_mode='circular', device='cuda')
+print("Input dimension:", model.input_dim) # you could concatenate: "->", model.projection_channels, when using projection
 
 optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
 
-# not that useful in such a simple environment
-# scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=0.9995)
+# simple scheduler for a simple environment
+scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=0.9995)
 
 weights = torch.tensor(weights, device=model.device)
 loss_func = torch.nn.CrossEntropyLoss(weight=weights)
