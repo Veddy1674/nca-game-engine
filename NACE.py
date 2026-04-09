@@ -15,7 +15,8 @@ class NACE(nn.Module):
         `vis_channels`: Number of one-hot visible channels, the last one is the "dead" color (e.g. 4 for orange, red, purple, white, where white is alpha/background).
         `hid_channels`: Number of hidden channels, that each cell can use for internal states.
         `extra_channels`: Number of extra channels that each cell perceives, just like actions.
-        `hidden_neurons`: Number of hidden neurons of the update net, which updates cells.
+        `projection_channels`: If a number, a Conv2d will be added to compress the input dimension to this number.
+        `hidden_neurons`: Number of hidden neurons of the update net (first layer), which updates cells.
         `input_length`: How many past states the cell can see (default: 1, meaning only the current state).
         `padding_mode`: Padding mode for the perceive function: 'reflect', 'circular', 'replicate' or the default 'zeros'.
         `use_global_context`: Whether to give all cells a general context of all other cells (for example, how much of each color is visible).
@@ -23,9 +24,9 @@ class NACE(nn.Module):
         `custom_kernel`: Custom kernel as a list, to use for the perceive function (Note: this will override the default Von Neumann neighborhood and 'dilations' must be [1]; XY axis are flipped).
         `device`: Device to run the model on (default: cuda if available, else cpu).
     """
-    def __init__(self, actions: int, vis_channels: int, hid_channels: int, extra_channels:int=0, hidden_neurons:int=128,
-                 input_length:int=1, padding_mode: str = 'zeros', use_global_context: bool = False, dilations: list[int] = [1],
-                 custom_kernel: list[list[int]]=None, device: str=None
+    def __init__(self, actions: int, vis_channels: int, hid_channels: int, extra_channels: int = 0, projection_channels: int|None = None,
+                 hidden_neurons: int = 128, input_length: int = 1, padding_mode: str = 'zeros', use_global_context: bool = False,
+                 dilations: list[int] = [1], custom_kernel: list[list[int]]|None = None, device: str|None = None
                 ):
         super().__init__()
 
@@ -45,6 +46,7 @@ class NACE(nn.Module):
         self.hid_channels = hid_channels # causes issues if '1', 0 or >= 2 is fine
         self.channels = vis_channels + hid_channels
 
+        self.projection_channels = projection_channels
         self.custom_kernel = custom_kernel
 
         if self.custom_kernel is not None:
@@ -59,21 +61,41 @@ class NACE(nn.Module):
         # cell sees what the kernel sees, + actions, global context, past inputs, extra channels and so on
         self.input_dim = ((self.channels * (self.kernel_size * len(self.dilations))) * self.input_length) + self.actions + self.extra_channels + (self.channels if self.use_global_context else 0)
 
-        if self.hid_channels > 0 and (hidden_neurons / self.hid_channels) <= 2:
-            print("Warning: 'hidden_neurons / hid_channels' is less than or equal to 2, this might cause instability.")
+        # quite old logic, and it's common sense
+        # if self.hid_channels > 0 and (hidden_neurons / self.hid_channels) <= 2:
+        #     print("Warning: 'hidden_neurons / hid_channels' is less than or equal to 2, this might cause instability.")
+
+        # projection channels logic
+        if self.projection_channels is None:
+            self.input_proj = nn.Identity() # do nothing
+        else:
+            # compresses input dimension, might improve performance due to less noise, or worsen it
+            # due to less information, the neural network itself learns what is important and what is not
+            
+            # decreases VRAM usage (allow bigger batches due to smaller input dim), but increases parameter count
+            self.input_proj = nn.Sequential(
+                nn.Conv2d(self.input_dim, self.projection_channels, kernel_size=1),
+                nn.SELU()
+            )
+
+            # little warning
+            if self.projection_channels >= self.input_dim:
+                warn("'projection_channels' is greater than or equal to 'input_dim', which increases parameter count and VRAM usage for no benefit whatsoever.", category=UserWarning)
+                # ('for no benefit' is not 100% true, but for this specific architecture, there's no good reason to do so)
+        
+        # the first Conv2d's input is basically 'projection_channels if projection_channels is not None else input_dim'
 
         # update net
         self.net = nn.Sequential(
             # hidden neurons / hidden channels > 2
-            nn.Conv2d(self.input_dim, hidden_neurons, kernel_size=1),
+            nn.Conv2d(projection_channels or self.input_dim, hidden_neurons, kernel_size=1),
             nn.LeakyReLU(0.01), # looks like it makes the net slightly more stable than ReLU
-            nn.Conv2d(hidden_neurons, self.channels, kernel_size=1), # delta!
-            nn.Hardtanh(-0.5, 0.5) # previously using SELU
+            nn.Conv2d(hidden_neurons, self.channels, kernel_size=1) # delta!
         )
 
         # init to zero the second Conv2d for stability
-        nn.init.zeros_(self.net[-2].weight)
-        nn.init.zeros_(self.net[-2].bias)
+        nn.init.zeros_(self.net[-1].weight)
+        nn.init.zeros_(self.net[-1].bias)
 
         if self.custom_kernel is not None:
             # example with 5x5:
@@ -192,8 +214,11 @@ class NACE(nn.Module):
 
         # one single memory alloc
         inp = torch.cat(to_cat, dim=1)
-        
-        dx = self.net(inp)
+
+        # 1. compress to latent (or not if projection_channels is None)
+        # 2. forward update net
+        dx = self.net(self.input_proj(inp))
+
         return states[0] + dx # apply delta to current state only
     
     # s + a = s'
