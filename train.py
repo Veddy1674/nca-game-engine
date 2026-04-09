@@ -238,7 +238,7 @@ if __name__ == "__main__":
         if 'LOAD_MODEL' in globals():
             model.load(globals()['LOAD_MODEL'], optimizer=(optimizer if LOAD_OPTIMIZER else None))
         
-        steps, losses, autoreg_losses = main()
+        steps, losses = main()
 
         # save
         print(f"\nTraining completed in {time() - t:.2f}s.")
