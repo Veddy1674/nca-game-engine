@@ -76,7 +76,12 @@ if __name__ == "__main__":
     
     total_params = sum(p.numel() for p in model.parameters())
 
-    print(f"Input dimension: {model.input_dim}")
+    real_input_dim = ""
+    if model.projection_channels is not None:
+        # e.g: 100 (inp_dim) -> 50 (proj_dim)
+        real_input_dim = f" -> {model.projection_channels}"
+
+    print(f"Input dimension: {model.input_dim}{real_input_dim}")
     print(f"Kernel size: {model.kernel_size}")
     print(f"Total parameters: {total_params:,}")
     print(f"Microsteps: {MICROSTEPS}")
@@ -87,5 +92,5 @@ if __name__ == "__main__":
     test_inference_speed(model)
     
     print("\nCompiled:")
-    model = torch.compile(model, mode="reduce-overhead", fullgraph=True)
+    model = torch.compile(model, mode="default")
     test_inference_speed(model)
