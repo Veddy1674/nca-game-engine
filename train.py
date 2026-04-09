@@ -55,6 +55,10 @@ if POOL_LENGTH is not None:
     pool = deque(maxlen=POOL_LENGTH) # stores prediction, action_map, extra_map, target
 
 def pad_to_same(tensors: list[torch.Tensor], pad_value=0.0) -> torch.Tensor:
+    # ignore if all tensors have the same shape
+    if all(t.shape == tensors[0].shape for t in tensors[1:]):
+        return torch.stack(tensors)
+
     max_h = max(t.shape[1] for t in tensors)
     max_w = max(t.shape[2] for t in tensors)
     
@@ -86,7 +90,7 @@ def main():
     step_numbers = []
 
     # train loop
-    for step in tqdm(range(STEPS)):
+    for step in tqdm(range(STEPS), desc="Training"):
         if LOAD_QUICK:
             # random file indexes
             file_indices = torch.randint(len(all_states), (BATCH_SIZE,))
@@ -114,6 +118,7 @@ def main():
 
             FILE_GRID_SIZE = (s.shape[2], s.shape[3]) # set after padding!
 
+            #! NOTE: hidden channels are zeroed every single step!
             hidden_states = torch.zeros(BATCH_SIZE, model.hid_channels, *FILE_GRID_SIZE, device=model.device)
 
             s = torch.cat([s, hidden_states], dim=1) # append hidden channels to each
@@ -180,6 +185,7 @@ def main():
 
             pred_vis = model_pred[:, :model.vis_channels].detach()
 
+            #! NOTE: hidden channels are zeroed every single step!
             hidden_states = torch.zeros(BATCH_SIZE, model.hid_channels, *FILE_GRID_SIZE, device=model.device)
             current_x = [torch.cat([pred_vis, hidden_states], dim=1)]
 
@@ -214,7 +220,10 @@ def main():
             loss_history.append(total_loss.item())
             step_numbers.append(step+1)
     
-    return loss_history, step_numbers
+    # (for loop end)
+    
+    # NOTE: loss_history is only used if LOSS_GRAPH is not None
+    return step_numbers, loss_history
 
 if __name__ == "__main__":
     from datetime import datetime
@@ -229,7 +238,7 @@ if __name__ == "__main__":
         if 'LOAD_MODEL' in globals():
             model.load(globals()['LOAD_MODEL'], optimizer=(optimizer if LOAD_OPTIMIZER else None))
         
-        losses, steps = main()
+        steps, losses, autoreg_losses = main()
 
         # save
         print(f"\nTraining completed in {time() - t:.2f}s.")
@@ -244,17 +253,18 @@ if __name__ == "__main__":
 
             plt.figure(figsize=(10, 5))
             plt.plot(steps, losses, "b-", label="Training Loss")
+            
             plt.xlabel("Step")
             plt.ylabel("Loss")
 
-            plt.title("Training Loss Over Time")
+            plt.title("Loss Over Time")
             plt.grid(True, alpha=0.3)
             plt.legend()
 
             max_loss = max(losses)
             plt.ylim(0, min(max_loss, 1.5)) # show loss between 0 and clamped max loss (to avoid loss spikes to ruin the graph)
 
-            plt.gca().yaxis.set_major_locator(plt.MultipleLocator(0.1))  # Tick ogni 0.1
+            plt.gca().yaxis.set_major_locator(plt.MultipleLocator(0.1))
             plt.gca().yaxis.set_major_locator(plt.MaxNLocator(8)) # loss values that appear in the graph
             plt.gca().yaxis.set_major_formatter(plt.FuncFormatter(lambda y, _: f'{y:.4f}'))
 
