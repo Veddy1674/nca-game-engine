@@ -70,7 +70,7 @@ if __name__ == "__main__":
     states = np.array(states)
     actions = np.array(actions)
 
-    np.savez("example/dev/data/example_0.npz", states=states, actions=actions)
+    np.savez_compressed("example/dev/data/example_0.npz", states=states, actions=actions)
 
     print("States shape:", states.shape)
     print("Actions shape:", actions.shape)
