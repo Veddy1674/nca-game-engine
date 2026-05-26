@@ -78,7 +78,7 @@ FPS = None # waits for input
 TEMPERATURE = 1.0
 TOP_P = 0.99 # only applied if temperature > 1.0
 
-model = NACE(actions=4, vis_channels=len(COLOR_MAP), hid_channels=0, input_length=1, hidden_neurons=24, padding_mode='circular', device='cuda')
+model = NACE(actions=len(KEY_MAP), vis_channels=len(COLOR_MAP), hid_channels=0, input_length=1, hidden_neurons=24, padding_mode='circular', device='cuda')
 print("Input dimension:", model.input_dim) # you could concatenate: "->", model.projection_channels, when using projection
 
 optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
