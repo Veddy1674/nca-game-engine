@@ -259,7 +259,6 @@ def main():
     return step_numbers, loss_history
 
 if __name__ == "__main__":
-    from warnings import warn
     from datetime import datetime
 
     LOG_SEGMENTS = STEPS // LOG_SEGMENTS
