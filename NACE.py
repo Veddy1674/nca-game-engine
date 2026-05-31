@@ -20,13 +20,15 @@ class NACE(nn.Module):
         `input_length`: How many past states the cell can see (default: 1, meaning only the current state).
         `padding_mode`: Padding mode for the perceive function: 'reflect', 'circular', 'replicate' or the default 'zeros'.
         `use_global_context`: Whether to give all cells a general context of all other cells (for example, how much of each color is visible).
+        `persistent_memory`: Whether to make hidden channels persistent along steps, or reset hidden channels each step (channels will only persist during microsteps)
         `dilations`: List of dilations to use for the perceive function (default: [1], meaning only the immediate neighbors).
         `custom_kernel`: Custom kernel as a list, to use for the perceive function (Note: this will override the default Von Neumann neighborhood and 'dilations' must be [1]; XY axis are flipped).
         `device`: Device to run the model on (default: cuda if available, else cpu).
     """
     def __init__(self, actions: int, vis_channels: int, hid_channels: int, extra_channels: int = 0, projection_channels: int|None = None,
                  hidden_neurons: int = 128, input_length: int = 1, padding_mode: str = 'zeros', use_global_context: bool = False,
-                 dilations: list[int] = [1], custom_kernel: list[list[int]]|None = None, device: str|None = None
+                 persistent_memory: bool = False, dilations: list[int] = [1], custom_kernel: list[list[int]]|None = None,
+                 device: str|None = None
                 ):
         super().__init__()
 
@@ -46,6 +48,7 @@ class NACE(nn.Module):
         self.hid_channels = hid_channels # causes issues if '1', 0 or >= 2 is fine
         self.channels = vis_channels + hid_channels
 
+        self.persistent_memory = persistent_memory
         self.projection_channels = projection_channels
         self.custom_kernel = custom_kernel
 
@@ -218,6 +221,14 @@ class NACE(nn.Module):
         # 1. compress to latent (or not if projection_channels is None)
         # 2. forward update net
         dx = self.net(self.input_proj(inp))
+
+        if self.persistent_memory:
+            vis = states[0][:, :self.vis_channels] + dx[:, :self.vis_channels]
+            hid = states[0][:, self.vis_channels:] + dx[:, self.vis_channels:]
+
+            hid = torch.clamp(hid, min=-10.0, max=10.0)
+            
+            return torch.cat([vis, hid], dim=1)
 
         return states[0] + dx # apply delta to current state only
     
