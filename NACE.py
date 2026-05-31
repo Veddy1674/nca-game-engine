@@ -286,7 +286,11 @@ class NACE(nn.Module):
                     tensor = torch.from_numpy(data[name])
 
                     if dtype == 'float':
-                        tensor = tensor.float()
+                        if tensor.dtype == torch.uint8: # if actual data dtype is uint8...
+                            tensor = tensor.float().div_(255.0) # normalize in place to [0, 1]
+                        else:
+                            tensor = tensor.float()
+                        
                     elif dtype == 'long':
                         tensor = tensor.long()
                     
@@ -341,10 +345,13 @@ class Dataset:
 
                 tensor = torch.from_numpy(data)
 
+                # TODO manage uint8?
                 if self.dtype == 'float':
                     return tensor.float()
+                
                 elif self.dtype == 'long':
                     return tensor.long()
+                
                 else:
                     return tensor
                 
