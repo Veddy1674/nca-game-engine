@@ -91,8 +91,10 @@ def main():
     all_states, all_actions, *extra_data = model.load_data(DATA_GLOB, limit=FILES_INCLUDE, load_quick=LOAD_QUICK, load_instant=LOAD_INSTANT, states='float', actions='long', **EXTRA_MAPS)
     all_extra = dict(zip(EXTRA_MAPS.keys(), extra_data))
 
+    # to calculate theoretical epochs (since sampling is random, it's a statistical baseline to measure dataset coverage)
+    total_frames = sum(max(0, len(actions) - model.input_length - TRAIN_STEPS) for actions in all_actions)
+
     print(f"Done in {time() - t:.2f}ms")
-    # print(f"Total samples: {len(all_states)}") # not correct
 
     # for graphs
     loss_history = []
@@ -244,7 +246,9 @@ def main():
             poolinfo = f" - Pool Loss: {pool_loss.item():.4f}" if pool_loss is not None else " - Pool Loss: None"
             lrinfo = f" - LR: {scheduler.get_last_lr()[0]:.3e}" if scheduler is not None else ""
 
-            tqdm.write(f"Step {step+1}/{STEPS} - Loss: {total_loss.item():.4f}{"" if POOL_LENGTH is None else poolinfo}{lrinfo}")
+            epochsinfo = f" (~{step * BATCH_SIZE / total_frames:.1f} Epochs)"
+
+            tqdm.write(f"Step {step+1}/{STEPS}{epochsinfo} - Loss: {total_loss.item():.4f}{"" if POOL_LENGTH is None else poolinfo}{lrinfo}")
 
             loss_history.append(total_loss.item())
             step_numbers.append(step+1)
@@ -255,6 +259,7 @@ def main():
     return step_numbers, loss_history
 
 if __name__ == "__main__":
+    from warnings import warn
     from datetime import datetime
 
     LOG_SEGMENTS = STEPS // LOG_SEGMENTS
