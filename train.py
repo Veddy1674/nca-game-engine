@@ -8,11 +8,16 @@ load_configuration()
 
 if 'get_time_indices' not in globals():
     def get_time_indices(all_states, all_actions, file_indices):
+        # random
         return [
-            # all_actions or all_states - 1 is the same, since e.g: all_states has shape (602, 8, 8) and all_actions has shape (601,)
-            torch.randint(len(all_actions[i]) - model.input_length - TRAIN_STEPS, (1,)).item() # with pooling, avoid t+2 being null
+            torch.randint(len(all_states[i]) - model.input_length - (TRAIN_STEPS - 1), (1,)).item()
             for i in file_indices
         ]
+
+if 'get_file_indices' not in globals():
+    def get_file_indices(all_states, all_actions):
+        # random
+        return torch.randint(len(all_states), (BATCH_SIZE,))
 
 if 'build_action_map' not in globals():
     def build_action_map(action_map, actions):
@@ -28,23 +33,27 @@ if 'GRADIENT_CLIP' not in globals():
     gradient_clip_autodefine = True
 
 if 'WEIGHT_LOSS' not in globals():
-    if TRAIN_STEPS <= 4: # [1 to 4]
+    if ROLLOUT_STEPS == 0:
+        # don't use weight loss with HC_PERSISTENCY (as it uses ground truth, there's no point in different loss weights)
+        WEIGHT_LOSS = [1 for _ in range(HC_PERSISTENCY)]
+    
+    elif ROLLOUT_STEPS <= 4: # [1 to 4]
         # linear
-        WEIGHT_LOSS = [i + 1 for i in range(TRAIN_STEPS)]
+        WEIGHT_LOSS = [i + 1 for i in range(ROLLOUT_STEPS)]
 
-    elif TRAIN_STEPS <= 7: # [5 to 7]
+    elif ROLLOUT_STEPS <= 7: # [5 to 7]
         # squared
         from math import sqrt
-        WEIGHT_LOSS = [sqrt(i + 1) for i in range(TRAIN_STEPS)]
+        WEIGHT_LOSS = [sqrt(i + 1) for i in range(ROLLOUT_STEPS)]
         
     else: # [8 to inf]
 
         # normalization for stability (and avoid insane gradient clip values)
-        raw_weights = [2 ** i for i in range(TRAIN_STEPS)]
+        raw_weights = [2 ** i for i in range(ROLLOUT_STEPS)]
         weight_sum = sum(raw_weights)
 
         # exponential
-        WEIGHT_LOSS = [w / weight_sum * TRAIN_STEPS for w in raw_weights]
+        WEIGHT_LOSS = [w / weight_sum * ROLLOUT_STEPS for w in raw_weights]
 
     # end
 
@@ -93,9 +102,9 @@ def main():
     for step in tqdm(range(STEPS), desc="Training"):
         if LOAD_QUICK:
             # random file indexes
-            file_indices = torch.randint(len(all_states), (BATCH_SIZE,))
+            file_indices = get_file_indices(all_states, all_actions)
             
-            # random frame indexes for each file
+            # random frame indexes for each file (or not if hc are persistent)
             time_indices = get_time_indices(all_states, all_actions, file_indices)
         else:
             # lazy loading:
@@ -118,18 +127,23 @@ def main():
 
             FILE_GRID_SIZE = (s.shape[2], s.shape[3]) # set after padding!
 
-            #! NOTE: hidden channels are zeroed every single step!
-            hidden_states = torch.zeros(BATCH_SIZE, model.hid_channels, *FILE_GRID_SIZE, device=model.device)
+            #! NOTE: if model.persistent_memory is False, hidden channels are zeroed every single step!
+            hidden_channels = torch.zeros(BATCH_SIZE, model.hid_channels, *FILE_GRID_SIZE, device=model.device)
 
-            s = torch.cat([s, hidden_states], dim=1) # append hidden channels to each
+            s = torch.cat([s, hidden_channels], dim=1)
             model_x.append(s)
 
         # train step:
         optimizer.zero_grad()
         total_loss = torch.tensor(0.0, device=model.device)
 
-        current_x = model_x
+        current_x = model_x # contains the zeroed hidden channels
 
+        # a single loop to manage HC_PERSISTENCY and ROLLOUT_STEPS, which behave similarly:
+        # hidden channels produced by the model are given as inputs for HC_PERSISTENCY steps
+        # (to implement short-long term memory)
+        # visible channels produced by the model are given as inputs for ROLLOUT_STEPS steps
+        # (for stability and to fix its own mistakes)
         for n in range(TRAIN_STEPS):
             if LOAD_QUICK:
                 step_actions = torch.stack([
@@ -183,15 +197,30 @@ def main():
             model_pred = model.step(current_x, step_action_map, step_extra_map, microsteps=MICROSTEPS)
             total_loss += loss_calc(model_pred, step_targets) * WEIGHT_LOSS[n]
 
-            pred_vis = model_pred[:, :model.vis_channels].detach()
+            if ROLLOUT_STEPS > 0:
+                # use argmax after the first step
+                if n == 0 or COLOR_MAP is None: # (if RGB always do this)
+                    pred_vis = model_pred[:, :model.vis_channels].detach() # get only vis channels
+                else:
+                    # for pixel-perfect precision and to avoid degradation over time, the predictions are "corrected"
+                    # before they're given as inputs, just like during inference.
+                    pred_classes = model_pred[:, :model.vis_channels].argmax(dim=1)
+                    pred_vis = F.one_hot(pred_classes, model.vis_channels).permute(0,3,1,2).float()
+            else:
+                # teacher forcing (use ground truth)
+                pred_vis = step_targets.detach()
 
-            #! NOTE: hidden channels are zeroed every single step!
-            hidden_states = torch.zeros(BATCH_SIZE, model.hid_channels, *FILE_GRID_SIZE, device=model.device)
-            current_x = [torch.cat([pred_vis, hidden_states], dim=1)]
+            if model.persistent_memory:
+                hidden_channels = model_pred[:, model.vis_channels:]#.detach()
+            else:
+                # NOTE: hidden channels are zeroed every single step!
+                hidden_channels = torch.zeros(BATCH_SIZE, model.hid_channels, *FILE_GRID_SIZE, device=model.device)
+
+            current_x = [torch.cat([pred_vis, hidden_channels], dim=1)]
 
         # save to pool 40% of the time
         if POOL_LENGTH is not None and torch.rand(1).item() < 0.4:
-            pass # unimplemented (i need to do more research first)
+            pass # unimplemented
         
         total_loss.backward() # not normalized on purpose
         
@@ -209,7 +238,7 @@ def main():
         pool_loss: torch.Tensor = None
         # pool loss - separate step
         if POOL_LENGTH is not None and len(pool) > 10:
-            pass # unimplemented (i need to do more research first)
+            pass # unimplemented
         
         if (step+1) % LOG_SEGMENTS == 0:
             poolinfo = f" - Pool Loss: {pool_loss.item():.4f}" if pool_loss is not None else " - Pool Loss: None"
@@ -238,6 +267,42 @@ if __name__ == "__main__":
         if 'LOAD_MODEL' in globals():
             model.load(globals()['LOAD_MODEL'], optimizer=(optimizer if LOAD_OPTIMIZER else None))
         
+        if model.persistent_memory:
+            if model.input_length != 1:
+                # this is unimplemented
+                raise ValueError("'model.input_length' must be 1 if persistent_memory is True (non-implemented)")
+            
+            if HC_PERSISTENCY <= 1:
+                # HC_PERSISTENCY to 1 could work but it's useless and nosense (hc resets every frame but during inference no reset)
+                raise ValueError("'HC_PERSISTENCY' must be > 1 if persistent_memory is True")
+            
+            # HC_PERSISTENCY=X, ROLLOUT_STEPS=0: X iterations, ground truth always, hidden reset after X steps
+            # HC_PERSISTENCY=X, ROLLOUT_STEPS=X: X iterations, rollout always, hidden reset after X steps
+            # HC_PERSISTENCY=1, ROLLOUT_STEPS=X: X iterations, rollout always, hidden reset every step
+
+            # HC_PERSISTENCY=X, ROLLOUT_STEPS=Y: not allowed
+            # HC_PERSISTENCY=Y, ROLLOUT_STEPS=X: not allowed
+
+            # which means only these cases are allowed:
+
+            # model.persistent_memory = True:
+            #   HC_PERSISTENCY > 1 & ROLLOUT_STEPS == 0
+            #   HC_PERSISTENCY > 1 & ROLLOUT_STEPS == HC_PERSISTENCY
+            #   HC_PERSISTENCY == 1 & ROLLOUT_STEPS >= 0
+
+            # model.persistent_memory = False:
+            #   HC_PERSISTENCY == 1 & ROLLOUT_STEPS >= 0
+
+            if not (ROLLOUT_STEPS == 0 or ROLLOUT_STEPS == HC_PERSISTENCY):
+                # unimplemented but not that important
+                raise ValueError("'ROLLOUT_STEPS' must be 0 OR equal to 'HC_PERSISTENCY' if 'HC_PERSISTENCY' > 1 (You can't mix teacher forcing and rollout in a training)")
+        
+        elif HC_PERSISTENCY != 1: # non persistent and HC_PERSISTENCY != 1
+            raise ValueError("'HC_PERSISTENCY' must be 1 if persistent_memory is False")
+        
+        TRAIN_STEPS = max(HC_PERSISTENCY, ROLLOUT_STEPS) # or "ROLLOUT_STEPS if ROLLOUT_STEPS > 0 else HC_PERSISTENCY"
+        
+        # start train loop
         steps, losses = main()
 
         # save
