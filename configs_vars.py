@@ -52,7 +52,9 @@ LOG_SEGMENTS: int # amount of info-prints total during training, (e.g: 10 log se
 FILE_NAME: str # path of the model saved after training
 DATA_GLOB: str # path of data to load, use asteriskes to include multiple files
 MICROSTEPS: int # how many pixels can information propagate to
-TRAIN_STEPS: int # (unstable) trains TRAIN_STEPS steps in a row each iteration, resulting in the AI less likely to accumulate errors over time
+
+HC_PERSISTENCY: int # every how many steps until hidden channels are resetted (min 1), only if model.persistent_memory is True
+ROLLOUT_STEPS: int # to train the model with its own predictions as inputs, resulting in the AI more likely to be able to fix its own mistakes
 POOL_LENGTH: int # (unstable) trains randomly the AI on states predicted by itself, resulting in the AI more likely to be able to fix its own mistakes
 LOAD_QUICK: bool # wheter to load everything to RAM (for small datasets) or use lazy loading
 LOAD_INSTANT: bool # wheter to load everything to RAM/VRAM (for tiny datasets where CPU loading data is the bottleneck)
