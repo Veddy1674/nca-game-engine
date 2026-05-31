@@ -60,7 +60,13 @@ if 'predict_next' not in globals():
 
         for k in range(model.input_length):
             s = state_history[-(k+1)] if k < len(state_history) else state_history[0] # pad with oldest
+
+            # normalize if uint8 (rgb only)
+            if s.dtype == np.uint8:
+                s = s.astype(np.float32) / 255.0
+            
             s = torch.from_numpy(s).float().unsqueeze(0).to(model.device)
+
             s = torch.cat([s, hidden], dim=1)
 
             model_x.append(s)
@@ -193,6 +199,10 @@ if 'reset' not in globals():
             state, success = maybe_resize(states_data[model.input_length - 1])
             if success:
                 print(f"Mismatch found: Trained on {data_grid[0]}x{data_grid[1]}, visualizing on {GRID_SIZE[0]}x{GRID_SIZE[1]} {WIN_SIZE}")
+
+            # normalize if uint8 (rgb only)
+            if state.dtype == np.uint8:
+                state = state.astype(np.float32) / 255.0
 
             # oldest -> newest, so [-1] is always most recent (consistent with append)
             state_history = [maybe_resize(states_data[i])[0] for i in range(model.input_length)]
