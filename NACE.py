@@ -54,7 +54,7 @@ class NACE(nn.Module):
 
         if self.custom_kernel is not None:
             if self.dilations != [1]:
-                warn("'dilations' has been set to [1] because a custom kernel was provided.", category=UserWarning)
+                print("WARNING: 'dilations' has been set to [1] because a custom kernel was provided.")
                 self.dilations = [1]
 
             self.kernel_size = sum(sum(row) for row in self.custom_kernel) # how many 1s in the kernel
@@ -83,7 +83,7 @@ class NACE(nn.Module):
 
             # little warning
             if self.projection_channels >= self.input_dim:
-                warn("'projection_channels' is greater than or equal to 'input_dim', which increases parameter count and VRAM usage for no benefit whatsoever.", category=UserWarning)
+                print("WARNING: 'projection_channels' is greater than or equal to 'input_dim', which increases parameter count and VRAM usage for no benefit whatsoever.")
                 # ('for no benefit' is not 100% true, but for this specific architecture, there's no good reason to do so)
         
         # the first Conv2d's input is basically 'projection_channels if projection_channels is not None else input_dim'
@@ -234,7 +234,6 @@ class NACE(nn.Module):
     
     # s + a = s'
     # e.g: (with input_length = 3): s + s' + s'' + a = s'''
-    # where input_length >= 1
     def step(self, states: list[torch.Tensor], action_map: torch.Tensor|None, extra_map: torch.Tensor|None, microsteps: int):
         state_history = states  # [current, prev1, prev2, ...]
         
