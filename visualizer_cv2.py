@@ -50,10 +50,9 @@ def apply_top_p(logits, p=0.9):
     logits[indices_to_remove] = float('-inf')
     return logits
 
-# for input_length >= 1:
 if 'predict_next' not in globals():
-    def predict_next(state_history: list[np.ndarray], action: int, apply_top_p):
-        hidden = torch.zeros(1, model.hid_channels, *GRID_SIZE, device=model.device)
+    def predict_next(state_history: list[np.ndarray], previous_hc: torch.Tensor, action: int, apply_top_p):
+        hidden = previous_hc
 
         # build model_x list from history
         model_x = []
@@ -82,9 +81,14 @@ if 'predict_next' not in globals():
 
         logits = pred[0, :model.vis_channels]
 
+        if model.persistent_memory:
+            new_hc = pred[:, model.vis_channels:].detach() # whatever the model predicted (keeps batch dim)
+        else:
+            new_hc = previous_hc # remains zeroed
+
         if COLOR_MAP is not None: # one-hot
             if TEMPERATURE <= 1.0: # use argmax
-                return pred, logits.argmax(dim=0).cpu().numpy() # next_frame
+                return pred, logits.argmax(dim=0).cpu().numpy(), new_hc
 
             C, H, W = logits.shape
             logits = (logits / TEMPERATURE).view(C, -1).t() # apply temperature
@@ -94,6 +98,7 @@ if 'predict_next' not in globals():
             
             next_frame = torch.multinomial(probs, 1).view(H, W).cpu().numpy()
         else:
+            # (theorically, it's not called logits if not one-hot)
             next_frame = logits.cpu().numpy() # RGBA
 
             # add guassian noise
@@ -102,7 +107,7 @@ if 'predict_next' not in globals():
                 next_frame = next_frame + noise
                 next_frame = np.clip(next_frame, 0, 1)
         
-        return pred, next_frame
+        return pred, next_frame, new_hc
 
 win_name = "NCA Visualizer"
 
@@ -129,8 +134,8 @@ def maybe_resize(s):
     return s, False
 
 if 'manage_actions' not in globals():
-    def manage_actions(action, state_history, snap_colors, predict_next, apply_top_p):
-        last_prediction, next_frame = predict_next(state_history, action, apply_top_p)
+    def manage_actions(action, state_history, snap_colors, predict_next, previous_hc, apply_top_p):
+        last_prediction, next_frame, new_hc = predict_next(state_history, previous_hc, action, apply_top_p)
 
         if COLOR_MAP is not None:
             next_frame = np.eye(model.vis_channels)[next_frame].transpose(2, 0, 1) # to one-hot (4,8,8)
@@ -145,7 +150,7 @@ if 'manage_actions' not in globals():
         if len(state_history) > model.input_length:
             state_history.pop(0)
         
-        return last_prediction, next_frame
+        return last_prediction, next_frame, new_hc
 
 # RGB image before getting resized
 if 'pre_processing' not in globals():
@@ -210,15 +215,18 @@ if 'reset' not in globals():
         return state, state_history
 
 def resetAll():
-    global state, state_history, frame_counter, last_prediction
+    global state, state_history, frame_counter, last_prediction, previous_hc
 
     state, state_history = reset(maybe_resize, states_data, data_grid)
     frame_counter = 0
     last_prediction = None
+    previous_hc = torch.zeros(1, model.hid_channels, *GRID_SIZE, device=model.device)
+
+previous_hc: torch.Tensor|None = None
+last_prediction: torch.Tensor|None = None
 
 resetAll()
 first_state = state
-last_prediction: torch.Tensor|None = None
 
 INV_KEY_MAP = {v:k for k,v in KEY_MAP.items()}
 
@@ -235,11 +243,12 @@ if __name__ == "__main__":
         if key == ord('q'): # debug frame info
             print(f"\nFrame {frame_counter}")
 
-            amount = [int(np.sum(state[i]).item()) for i in range(model.actions)]
-            
-            print(f"Amount of each class out of {sum(amount)}:") # or just GRID_SIZE[0] * GRID_SIZE[1]
-            for cls, data in COLOR_MAP.items():
-                print(f"  {data['name']:10} - {amount[cls]}")
+            if COLOR_MAP is not None:
+                amount = [int(np.sum(state[i]).item()) for i in range(model.actions)]
+                
+                print(f"Amount of each class out of {sum(amount)}:") # or just GRID_SIZE[0] * GRID_SIZE[1]
+                for cls, data in COLOR_MAP.items():
+                    print(f"  {data['name']:10} - {amount[cls]}")
 
             continue
 
@@ -250,13 +259,11 @@ if __name__ == "__main__":
             else:
                 hid_channels: torch.Tensor = last_prediction[0, model.vis_channels:] # (hid_channels, H, W)
 
-                print(f"\nHidden channels shape: {hid_channels.shape}")
-
                 # get values
                 with torch.no_grad():
                     hidden = hid_channels.cpu().numpy()
                 
-                print(f"Mean: {hidden.mean():.3f}, Std: {hidden.std():.3f}")
+                print(f"Mean: {hidden.mean():.3f} - Std: {hidden.std():.3f} - Min: {hidden.min():.3f} - Max: {hidden.max():.3f}")
             
             continue
 
@@ -270,7 +277,7 @@ if __name__ == "__main__":
             break
 
         if action is not None:
-            last_prediction, state = manage_actions(action, state_history, snap_colors, predict_next, apply_top_p)
+            last_prediction, state, previous_hc = manage_actions(action, state_history, snap_colors, predict_next, previous_hc, apply_top_p)
             
             frame_counter += 1
 
