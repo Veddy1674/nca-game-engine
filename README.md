@@ -4,6 +4,11 @@
 
 NACE (Neural Adaptive Cellular Engine) is an AI architecture designed to simulate interactive environments through emergent behaviors: no hardcoded physics or game logic, just a neural network predicting the next frame from the current state and player input.
 
+> **Important:** > I am currently working on a reimplementation of this architecture in JAX, featuring stricter code standards, performance optimizations, and a redesigned core logic.  
+> This repository contains the simplified (and older) PyTorch implementation, which may be replaced by the JAX version in the future.
+
+---
+
 [Architecture](#architecture)ㆍ[Project Structure](#project-structure)ㆍ[Getting Started](#getting-started)
 
 ## Preview:
